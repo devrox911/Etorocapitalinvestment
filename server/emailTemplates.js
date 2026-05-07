@@ -2,7 +2,7 @@
 const DEFAULT_SITE_URL = 'https://etorocapitalinvestment.vercel.app';
 const SITE_URL = (process.env.EMAIL_SITE_URL || process.env.VITE_APP_URL || `https://${process.env.APP_DOMAIN || 'etorocapitalinvestment.vercel.app'}` || DEFAULT_SITE_URL).replace(/\/$/, '');
 const EMAIL_LOGO_PATH = '/images/email-logo.png';
-const LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABDwAAADQCAYAAADGMb0fAAAACXBIWXMAAA7DAAAOwwHHb6nr0RQUEQAAAADPbqVBAAAAIElEQVR4nO3BMQEAAADCoPVPbQXfoAAAAAAAAAAAAAAAAAAAAAAwN+IAATX8AAE1/IABAAAA';
+const LOGO_BASE64 = require('fs').readFileSync(__dirname + '/emaillogo-base64.js', 'utf-8').trim();
 const LOGO_IMAGE = process.env.EMAIL_LOGO_URL || LOGO_BASE64;
 const GOOGLE_TRANSLATE_URL = 'https://translate.google.com/?sl=en&tl=auto&op=translate';
 
