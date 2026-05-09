@@ -295,6 +295,107 @@ app.post('/api/notify/referral-signup', async (req, res) => {
   }
 });
 
+// Test: Send test deposit email
+app.post('/api/test/send-deposit-email', async (req, res) => {
+  try {
+    const { email, name, amount, method, currency, txHash } = req.body || {};
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const testName = name || 'Test User';
+    const testAmount = amount || '250.00';
+    const testMethod = method || 'Bitcoin';
+    const testCurrency = currency || 'BTC';
+    const testTxHash = txHash || '0x1234567890abcdef1234567890abcdef12345678901234567890abcdef';
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Deposit Confirmation</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+      <div style="max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <!-- Dark Header with Logo -->
+        <div style="background: linear-gradient(135deg, #0f172a 0%, #1a202c 100%); padding: 50px 20px; text-align: center;">
+          <a href="${SITE_URL}" target="_blank" style="text-decoration: none; display: inline-block;">
+            <img src="${SITE_URL}/images/email-logo.png" alt="eToro Trust Capital Logo" width="200" height="auto" style="display: block; max-width: 100%; height: auto; border: 0; font-family: sans-serif; font-size: 20px; color: #f0b90b; font-weight: bold;" onerror="this.style.display='none'; this.parentElement.innerHTML += '<div style=\\'color: #f0b90b; font-size: 24px; font-weight: bold; letter-spacing: 2px;\\'>eTORO TRUST CAPITAL</div>'" />
+          </a>
+          <p style="margin: 15px 0 0 0; color: #f0b90b; font-size: 14px; letter-spacing: 1px; font-weight: bold;">eTORO TRUST CAPITAL</p>
+        </div>
+        
+        <!-- White Content Area -->
+        <div style="padding: 30px 20px; color: #333; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin: 0 0 15px 0;">Deposit Request Received</h2>
+          <p style="line-height: 1.8; margin: 0 0 15px 0;">Hello ${testName},</p>
+          <p style="line-height: 1.8; margin: 0 0 20px 0;">We have received your deposit request. It is currently <strong>Pending</strong> waiting for blockchain confirmation and admin approval.</p>
+          
+          <table style="width: 100%; border-collapse: collapse; margin: 25px 0;">
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 12px; font-weight: bold; color: #0f172a; background-color: #f9f9f9; width: 40%;">Amount:</td>
+              <td style="padding: 12px; color: #333;">$${testAmount}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 12px; font-weight: bold; color: #0f172a; background-color: #f9f9f9;">Method:</td>
+              <td style="padding: 12px; color: #333;">${testMethod} ${testCurrency ? `(${testCurrency})` : ''}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 12px; font-weight: bold; color: #0f172a; background-color: #f9f9f9;">Transaction Hash:</td>
+              <td style="padding: 12px; color: #333;"><small>${testTxHash.substring(0, 20)}...</small></td>
+            </tr>
+            <tr>
+              <td style="padding: 12px; font-weight: bold; color: #0f172a; background-color: #f9f9f9;">Status:</td>
+              <td style="padding: 12px; color: #f0b90b; font-weight: bold;">Pending</td>
+            </tr>
+          </table>
+          
+          <p style="line-height: 1.8; margin: 0 0 20px 0;">You will receive another email once your deposit is approved.</p>
+          
+          <center style="margin-top: 25px;">
+            <a href="${SITE_URL}/dashboard" style="display: inline-block; padding: 12px 30px; background-color: #f0b90b; color: #000; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 14px;">Check Deposit Status</a>
+          </center>
+        </div>
+        
+        <!-- Footer -->
+        <div style="background-color: #f5f5f5; color: #666; padding: 20px; text-align: center; font-size: 12px; border-top: 1px solid #ddd;">
+          <p style="margin: 0 0 5px 0;">&copy; ${new Date().getFullYear()} eToro Trust Capital. All rights reserved.</p>
+          <p style="margin: 0;">This is an automated message, please do not reply.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+
+    const result = await sendTransactionalEmail({
+      to: email,
+      toName: testName,
+      subject: 'Test: Deposit Confirmation - eToro Trust Capital',
+      html: addEmailTranslationFeature(html)
+    });
+
+    if (result.sent) {
+      return res.json({ 
+        success: true, 
+        message: `Test deposit email sent to ${email}`,
+        details: {
+          recipient: email,
+          name: testName,
+          amount: testAmount,
+          method: testMethod
+        }
+      });
+    }
+    return res.status(500).json({ error: 'Failed to send test email' });
+  } catch (error) {
+    console.error('Test email error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to send test email' });
+  }
+});
+
 // Admin: Approve investment (server-side email, idempotent)
 app.post('/api/admin/investments/approve', async (req, res) => {
   try {
