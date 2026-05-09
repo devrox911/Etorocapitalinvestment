@@ -1,6 +1,13 @@
 import nodemailer from 'nodemailer';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'turbosmtp').trim().toLowerCase();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const LOGO_CID = 'etoro-trust-capital-logo';
+const LOGO_FILENAME = 'email-logo.png';
 
 export const htmlToText = (html = '') =>
   html
@@ -54,6 +61,35 @@ const normalizeRecipients = (to, fallbackName) => {
     .filter((recipient) => recipient.email);
 };
 
+const getLogoAttachment = () => {
+  const candidatePaths = [
+    path.join(process.cwd(), 'public', 'images', LOGO_FILENAME),
+    path.join(__dirname, '..', 'public', 'images', LOGO_FILENAME),
+  ];
+
+  const logoPath = candidatePaths.find((candidate) => fs.existsSync(candidate));
+  if (!logoPath) return null;
+
+  return {
+    filename: LOGO_FILENAME,
+    path: logoPath,
+    cid: LOGO_CID,
+    contentType: 'image/png',
+  };
+};
+
+const inlineStandardLogo = (html = '') => {
+  const logoAttachment = getLogoAttachment();
+  if (!logoAttachment || !/\/images\/email-logo\.png/i.test(html)) {
+    return { html, attachments: [] };
+  }
+
+  return {
+    html: html.replace(/src=(["'])[^"']*\/images\/email-logo\.png\1/gi, `src="cid:${LOGO_CID}"`),
+    attachments: [logoAttachment],
+  };
+};
+
 const hasSmtp = () => !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
 const getSmtpProviderLabel = () =>
@@ -77,7 +113,7 @@ export const getEmailProviderStatus = () => {
   };
 };
 
-const sendViaSmtp = async ({ recipients, subject, html, text, replyTo, sender }) => {
+const sendViaSmtp = async ({ recipients, subject, html, text, replyTo, sender, attachments }) => {
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -95,6 +131,7 @@ const sendViaSmtp = async ({ recipients, subject, html, text, replyTo, sender })
     subject,
     text,
     html,
+    attachments,
   });
 
   return {
@@ -124,7 +161,7 @@ export const sendTransactionalEmail = async ({
 
   const sender = getSender();
   const replyTo = getReplyTo(replyToEmail, replyToName);
-  const normalizedHtml = html || '';
+  const { html: normalizedHtml, attachments } = inlineStandardLogo(html || '');
   const normalizedText = text || htmlToText(normalizedHtml);
 
   const result = await sendViaSmtp({
@@ -134,6 +171,7 @@ export const sendTransactionalEmail = async ({
     text: normalizedText,
     replyTo,
     sender,
+    attachments,
   });
 
   return {

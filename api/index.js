@@ -20,6 +20,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.EMAIL_REPLY_TO || process.env.EMAIL_FROM || 'noreply@etorocapital.online';
+const SITE_URL = (process.env.EMAIL_SITE_URL || process.env.VITE_APP_URL || `https://${process.env.APP_DOMAIN || 'etorocapitalinvestment.vercel.app'}`).replace(/\/$/, '');
+const EMAIL_LOGO_PATH = '/images/email-logo.png';
+const LOGO_IMAGE = process.env.EMAIL_LOGO_URL || `${SITE_URL}${EMAIL_LOGO_PATH}`;
 const GOOGLE_TRANSLATE_URL = 'https://translate.google.com/?sl=en&tl=auto&op=translate';
 const EMAIL_TRANSLATION_BLOCK = `
       <div style="margin: 24px 0 0; padding: 16px; text-align: center; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;">
@@ -56,7 +59,10 @@ const sendAdminActivityEmail = async ({ subject, heading, rows }) => {
 </head>
 <body style="margin:0; padding:0; background:#ffffff; font-family:Arial, sans-serif; color:#0f172a;">
   <div style="max-width:620px; margin:24px auto; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
-    <div style="padding:24px; border-bottom:3px solid #f0b90b;">
+    <div style="padding:24px; border-bottom:3px solid #f0b90b; text-align:center;">
+      <a href="${SITE_URL}" target="_blank" style="display:inline-block; text-decoration:none; margin-bottom:14px;">
+        <img src="${LOGO_IMAGE}" alt="eToro Trust Capital" width="180" style="display:block; max-width:180px; height:auto; border:0;" />
+      </a>
       <h2 style="margin:0; color:#0f172a;">${heading}</h2>
     </div>
     <div style="padding:24px;">
