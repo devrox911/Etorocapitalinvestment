@@ -1,10 +1,10 @@
 /**
  * Test script for investment pending notification endpoint
- * Tests sending email to pelumipecky@gmail.com
+ * Tests sending email to test user
  */
 
 const investmentId = 'test-' + Date.now();
-const userId = 'pelumipecky'; // or whatever test user ID exists
+const userId = 'test-user-' + Date.now(); // test user ID
 
 const testPayload = {
   investmentId,

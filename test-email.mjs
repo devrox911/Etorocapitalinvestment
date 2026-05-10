@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 
 const sendTestEmail = async () => {
   try {
-    const email = 'pelumipecky@gmail.com';
+    const email = 'test@example.com';
     const response = await fetch('http://localhost:3000/api/test/send-deposit-email', {
       method: 'POST',
       headers: {

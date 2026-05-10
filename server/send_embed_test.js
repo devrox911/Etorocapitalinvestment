@@ -1,6 +1,6 @@
 const http = require('http');
 const payload = {
-  to: 'Pelumipecky@gmail.com',
+  to: 'test@example.com',
   subject: 'Logo embed test - inline',
   html: '<div style="padding:20px;"><h3>Logo embed test</h3><img src="https://raw.githubusercontent.com/yourusername/yourrepo/main/public/images/ciphervaultlogobig.svg" alt="logo" style="max-width:240px;"/></div>'
 };

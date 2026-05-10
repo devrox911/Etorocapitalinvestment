@@ -6,7 +6,7 @@
 const testPayload = {
   investmentId: 'test-inv-' + Date.now(),
   userId: 'test-user-123',
-  userEmail: 'pelumipecky@gmail.com',
+  userEmail: 'test@example.com',
   plan: '7-Day Investment Plan',
   amount: 5000,
   userName: 'Test User',
@@ -43,7 +43,7 @@ const sendEmail = async () => {
 
     if (response.ok) {
       console.log('\n✅ EMAIL SENT SUCCESSFULLY!');
-      console.log('📧 Check pelumipecky@gmail.com for the test email');
+      console.log('📧 Check test email inbox for the test email');
       if (data.messageId) {
         console.log('Message ID:', data.messageId);
       }
