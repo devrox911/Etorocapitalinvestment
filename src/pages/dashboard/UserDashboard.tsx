@@ -2,7 +2,7 @@ import { useState, useEffect, useContext, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import LanguageSwitcher from '@/components/ui/LanguageSwitcher'
 import { useNavigate, Link } from 'react-router-dom'
-import { supabaseDb, supabaseRealtime, supabase, DepositRecord } from '@/lib/supabaseUtils'
+import { supabaseDb, supabaseRealtime, supabase, DepositRecord, ReferralRecord } from '@/lib/supabaseUtils'
 import { PLAN_CONFIG, formatPercent } from '@/utils/planConfig'
 import { UserRole } from '@/utils/roles'
 import { fetchCryptoPrices, fetchDetailedCryptoPrices, formatPrice, formatMarketCap, CryptoPrice, CryptoPrices } from '@/utils/cryptoPrices'
@@ -48,15 +48,54 @@ interface Investment {
   status?: string
   date?: string
   startDate?: string | null       // When investment was activated
+  updated_at?: string
+  created_at?: string
   duration?: number
   daysCompleted?: number   // Days that have been credited
   authStatus?: string
 }
 
-const DashboardMarquee = () => (
+interface RoiPopupItem {
+  id: string
+  plan: string
+  amount: number
+  status?: string
+}
+
+const formatCurrency = (amount: number = 0) =>
+  amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const getReferralUsername = (referral: ReferralRecord) =>
+  referral.referredUser?.userName?.trim() || 'Username unavailable'
+
+const getReferralDetails = (referral: ReferralRecord) => {
+  const pieces = [
+    referral.referredUser?.name?.trim(),
+    referral.referredId ? `ID: ${referral.referredId}` : '',
+    referral.created_at ? new Date(referral.created_at).toLocaleDateString() : 'Referral signup',
+  ].filter(Boolean)
+
+  return pieces.join(' • ')
+}
+
+const getInvestmentEarnings = (investment: Investment) =>
+  (Number(investment.creditedRoi || 0) + Number(investment.creditedBonus || 0)) ||
+  Number(investment.earnedRoi || 0) ||
+  Number(investment.roi || 0)
+
+const getTodayKey = () => new Date().toISOString().slice(0, 10)
+
+const DashboardMarquee = ({ btcPrice, loading }: { btcPrice: number; loading: boolean }) => {
+  const bitcoinMessage = btcPrice > 0
+    ? `Bitcoin live price: $${formatPrice(btcPrice)}/BTC. Trade with 0% fees on selected pairs.`
+    : loading
+      ? 'Loading live Bitcoin price...'
+      : 'Bitcoin live price temporarily unavailable. Trade with 0% fees on selected pairs.'
+
+  return (
   <div className="dashboard-marquee">
     <div className="marquee-content">
-      <span className="marquee-item"><i className="icofont-rocket-alt-2"></i> Bitcoin hits $95,000! Trade with 0% fees on selected pairs.</span>
+      <span className="marquee-item"><i className="icofont-rocket-alt-2"></i> {bitcoinMessage}</span>
       <span className="marquee-item"><i className="icofont-star"></i> New "Diamond Hands" Plan available: Earn 150% ROI in 30 Days.</span>
       <span className="marquee-item"><i className="icofont-gift"></i> Limited Time: Refer a friend and get $50 bonus instantly!</span>
       <span className="marquee-item"><i className="icofont-shield-alt"></i> Security Update: Enable 2FA for enhanced account protection.</span>
@@ -64,7 +103,8 @@ const DashboardMarquee = () => (
       <span className="marquee-item"><i className="icofont-info-circle"></i> System Maintenance scheduled for Sunday 02:00 UTC.</span>
     </div>
   </div>
-);
+  )
+}
 
 function UserDashboard() {
   const { t } = useTranslation();
@@ -277,6 +317,19 @@ function UserDashboard() {
             // Update localStorage for consistency
             localStorage.setItem('userInvestments', JSON.stringify(userInvestments));
             console.log('Investments saved to state and localStorage');
+
+            const referralSummary = await supabaseDb.getReferralSummary(userData.idnum, userData.referralCode);
+            setDownlineReferrals(referralSummary.referrals);
+            if (
+              referralSummary.count !== (userData.referralCount || 0) ||
+              referralSummary.bonusTotal !== (userData.referralBonusTotal || 0)
+            ) {
+              syncSessionUser({
+                ...userData,
+                referralCount: Math.max(referralSummary.count, userData.referralCount || 0),
+                referralBonusTotal: Math.max(referralSummary.bonusTotal, userData.referralBonusTotal || 0),
+              });
+            }
             
             // Fetch withdrawals
             const userWithdrawals = await supabaseDb.getWithdrawalsByUser(userData.idnum);
@@ -580,11 +633,12 @@ function UserDashboard() {
         if (!currentUser?.idnum) return;
 
         // Fetch all user data in parallel
-        const [investments, withdrawals, loans, deposits] = await Promise.all([
+        const [investments, withdrawals, loans, deposits, referralSummary] = await Promise.all([
           supabaseDb.getInvestmentsByUser(currentUser.idnum),
           supabaseDb.getWithdrawalsByUser(currentUser.idnum),
           supabaseDb.getLoansByUser(currentUser.idnum),
           supabaseDb.getDepositsByUser(currentUser.idnum),
+          supabaseDb.getReferralSummary(currentUser.idnum, currentUser.referralCode),
         ]);
 
         // Update all state with fresh data
@@ -600,6 +654,20 @@ function UserDashboard() {
         if (deposits) {
           setDeposits(deposits);
         }
+        if (referralSummary) {
+          setDownlineReferrals(referralSummary.referrals);
+          const syncedReferralCount = Math.max(referralSummary.count, currentUser.referralCount || 0);
+          const syncedReferralBonus = Math.max(referralSummary.bonusTotal, currentUser.referralBonusTotal || 0);
+          if (
+            syncedReferralCount !== (currentUser.referralCount || 0) ||
+            syncedReferralBonus !== (currentUser.referralBonusTotal || 0)
+          ) {
+            updateUser({
+              referralCount: syncedReferralCount,
+              referralBonusTotal: syncedReferralBonus,
+            });
+          }
+        }
       } catch (error) {
         console.warn('Auto-refresh failed for user dashboard:', error);
       }
@@ -612,7 +680,7 @@ function UserDashboard() {
     return () => {
       if (refreshInterval) clearInterval(refreshInterval);
     };
-  }, [currentUser?.idnum]);
+  }, [currentUser?.idnum, currentUser?.referralCode, currentUser?.referralCount, currentUser?.referralBonusTotal, updateUser]);
 
   // Placeholder alert/confirm functions
   function showAlert(type: string, title: string, message: string) {
@@ -630,11 +698,57 @@ function UserDashboard() {
   const [loading, setLoading] = useState(true)
   const [investments, setInvestments] = useState<Investment[]>([])
   const [withdrawals, setWithdrawals] = useState<any[]>([])
+  const [downlineReferrals, setDownlineReferrals] = useState<ReferralRecord[]>([])
+  const [roiPopup, setRoiPopup] = useState<{ show: boolean; items: RoiPopupItem[]; total: number; storageKey: string; signature: string }>({
+    show: false,
+    items: [],
+    total: 0,
+    storageKey: '',
+    signature: '',
+  })
   const [investmentError, setInvestmentError] = useState<string | null>(null)
   const [loans, setLoans] = useState<any[]>([])
   const [kycData, setKycData] = useState<any>(null)
   const [profileState, setProfileState] = useState<string>('Dashboard')
   const [showSidePanel, setShowSidePanel] = useState(false)
+
+  useEffect(() => {
+    if (!currentUser?.idnum || investments.length === 0) return;
+
+    const items = investments
+      .map((investment) => ({
+        id: investment.id || `${investment.plan}-${investment.date || investment.created_at || ''}`,
+        plan: investment.plan || 'Investment Plan',
+        amount: getInvestmentEarnings(investment),
+        status: investment.status,
+      }))
+      .filter((item) => item.amount > 0);
+
+    if (items.length === 0) return;
+
+    const signature = items
+      .map((item) => `${item.id}:${item.amount}`)
+      .sort()
+      .join('|');
+    const storageKey = `roi-return-popup:${currentUser.idnum}:${getTodayKey()}`;
+
+    if (localStorage.getItem(storageKey) === signature) return;
+
+    setRoiPopup({
+      show: true,
+      items,
+      total: items.reduce((sum, item) => sum + item.amount, 0),
+      storageKey,
+      signature,
+    });
+  }, [currentUser?.idnum, investments]);
+
+  const closeRoiPopup = () => {
+    if (roiPopup.storageKey && roiPopup.signature) {
+      localStorage.setItem(roiPopup.storageKey, roiPopup.signature);
+    }
+    setRoiPopup((prev) => ({ ...prev, show: false }));
+  };
   const [editMode, setEditMode] = useState(false)
   const [editForm, setEditForm] = useState({
     name: '',
@@ -662,6 +776,7 @@ function UserDashboard() {
   const [deposits, setDeposits] = useState<DepositRecord[]>([]); // Added deposits state
   const [depositLoading, setDepositLoading] = useState(false);
   const [depositError, setDepositError] = useState('');
+  const depositSubmitInFlightRef = useRef(false);
 
   // Helper function for copying deposit details
   const handleCopy = (text: string) => {
@@ -691,11 +806,16 @@ function UserDashboard() {
     bankSlip: null as File | null
   })
   const [paymentCopied, setPaymentCopied] = useState(false)
+  const [isInvestmentSubmitting, setIsInvestmentSubmitting] = useState(false)
+  const [investmentRetryAt, setInvestmentRetryAt] = useState(0)
+  const investmentSessionIdRef = useRef('')
+  const investmentSubmitInFlightRef = useRef(false)
   
   // KYC modal states
   const [showKycModal, setShowKycModal] = useState(false)
   const [kycStep, setKycStep] = useState<'intro' | 'personal' | 'documents' | 'review' | 'success'>('intro')
   const [kycSubmitting, setKycSubmitting] = useState(false)
+  const kycSubmitInFlightRef = useRef(false)
   const [kycForm, setKycForm] = useState({
     idNumber: '',
     idType: 'passport',
@@ -716,6 +836,8 @@ function UserDashboard() {
     accountName: '',
     routingNumber: ''
   })
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false)
+  const withdrawalSubmitInFlightRef = useRef(false)
   
   // Loan modal states
   const [showLoanModal, setShowLoanModal] = useState(false)
@@ -757,6 +879,8 @@ function UserDashboard() {
     reference2Phone: '',
     reference2Relationship: ''
   });
+  const [loanLoading, setLoanLoading] = useState(false)
+  const loanSubmitInFlightRef = useRef(false)
 
   const handleLogout = () => {
     logout()
@@ -909,7 +1033,7 @@ function UserDashboard() {
   }
 
   // Investment modal handlers
-  const paymentMethods = {
+  const cryptoPaymentMethods = {
     Bitcoin: {
       name: 'Bitcoin (BTC)',
       address: '14nkRtKqATBXudhd9yqSpLMZyy8JETmStH',
@@ -940,6 +1064,19 @@ function UserDashboard() {
       network: 'Tron Network (TRC-20)',
       icon: '₮'
     },
+  }
+
+  const paymentMethods = {
+    Crypto: {
+      name: 'Crypto',
+      description: 'Choose a crypto network and upload proof',
+      icon: '₿'
+    },
+    Balance: {
+      name: 'Account Balance',
+      description: 'Use funds already available in your wallet',
+      icon: '$'
+    },
     Bank: {
       name: 'Bank Transfer',
       accountName: 'eToro Trust Capital Investments Ltd.',
@@ -953,6 +1090,10 @@ function UserDashboard() {
 
   const handleStartInvestment = (plan: any) => {
     setSelectedPlan(plan)
+    investmentSessionIdRef.current = `INVSESSION-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    investmentSubmitInFlightRef.current = false
+    setIsInvestmentSubmitting(false)
+    setInvestmentRetryAt(0)
     setInvestmentForm({
       capital: plan.minCapital.toString(),
       paymentMethod: 'USDT-ERC20',
@@ -961,6 +1102,72 @@ function UserDashboard() {
     })
     setInvestmentStep('confirm')
     setShowInvestmentModal(true)
+  }
+
+  const selectedCryptoMethod =
+    cryptoPaymentMethods[investmentForm.paymentMethod as keyof typeof cryptoPaymentMethods] ||
+    cryptoPaymentMethods.Bitcoin
+
+  const isCryptoPayment = investmentForm.paymentMethod in cryptoPaymentMethods
+  const selectedPaymentName = isCryptoPayment
+    ? selectedCryptoMethod.name
+    : paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods]?.name || 'Payment Method'
+
+  const debitUserWallet = async (amount: number) => {
+    if (!currentUser?.idnum) {
+      throw new Error('User session not found')
+    }
+
+    const freshUser = await supabaseDb.getUserByIdnum(currentUser.idnum)
+    if (!freshUser) {
+      throw new Error('Could not refresh user balance')
+    }
+
+    const currentBalance = Number(freshUser.balance || 0)
+    const currentBonus = Number(freshUser.bonus || 0)
+    const availableBalance = currentBalance + currentBonus
+
+    if (amount > availableBalance) {
+      throw new Error(`Insufficient balance. Available balance is $${formatCurrency(availableBalance)}.`)
+    }
+
+    const balanceDebit = Math.min(currentBalance, amount)
+    const bonusDebit = amount - balanceDebit
+    const newBalance = currentBalance - balanceDebit
+    const newBonus = currentBonus - bonusDebit
+
+    await supabaseDb.updateUser(currentUser.idnum, {
+      balance: newBalance,
+      bonus: newBonus,
+    })
+
+    updateUser({ balance: newBalance, bonus: newBonus })
+
+    return {
+      previousBalance: currentBalance,
+      previousBonus: currentBonus,
+      newBalance,
+      newBonus,
+    }
+  }
+
+  const externalPaymentMethods = {
+    ...cryptoPaymentMethods,
+    Bank: paymentMethods.Bank,
+  }
+
+  const restoreUserWallet = async (previousBalance: number, previousBonus: number) => {
+    if (!currentUser?.idnum) return
+
+    try {
+      await supabaseDb.updateUser(currentUser.idnum, {
+        balance: previousBalance,
+        bonus: previousBonus,
+      })
+      updateUser({ balance: previousBalance, bonus: previousBonus })
+    } catch (rollbackError) {
+      console.error('Failed to restore wallet after investment error:', rollbackError)
+    }
   }
 
   const handleInvestmentNext = async () => {
@@ -976,6 +1183,10 @@ function UserDashboard() {
       }
       setInvestmentStep('choose-method')
     } else if (investmentStep === 'choose-method') {
+      if (investmentForm.paymentMethod === 'Balance') {
+        await handleSubmitInvestment()
+        return
+      }
       setInvestmentStep('payment')
     } else if (investmentStep === 'payment') {
       // Validate payment proof before submitting
@@ -1157,12 +1368,13 @@ function UserDashboard() {
       }
       setKycStep('review')
     } else if (kycStep === 'review') {
-      if (kycSubmitting) {
+      if (kycSubmitInFlightRef.current || kycSubmitting) {
         return
       }
 
       // Submit KYC to database
       try {
+        kycSubmitInFlightRef.current = true
         setKycSubmitting(true)
 
         if (!currentUser?.idnum) {
@@ -1259,6 +1471,7 @@ function UserDashboard() {
           'error'
         )
       } finally {
+        kycSubmitInFlightRef.current = false
         setKycSubmitting(false)
       }
     }
@@ -1332,7 +1545,7 @@ function UserDashboard() {
       // Removed restriction: User can withdraw even with active investments
       const lockedInvestmentCapital = 0
       
-      const availableBalance = (currentUser?.balance || 0) - lockedInvestmentCapital
+      const availableBalance = ((currentUser?.balance || 0) + (currentUser?.bonus || 0)) - lockedInvestmentCapital
 
       if (amount > availableBalance) {
           alert('Insufficient balance')
@@ -1373,6 +1586,10 @@ function UserDashboard() {
       }
       setWithdrawalStep('confirm')
     } else if (withdrawalStep === 'confirm') {
+      if (withdrawalSubmitInFlightRef.current) return
+      withdrawalSubmitInFlightRef.current = true
+      setWithdrawalLoading(true)
+
       // Submit withdrawal
       const amount = parseFloat(withdrawalForm.amount)
       
@@ -1400,16 +1617,22 @@ function UserDashboard() {
             const freshUser = await supabaseDb.getUserByIdnum(currentUser.idnum);
             if (freshUser) {
                 const currentBalance = freshUser.balance || 0;
-                const newBalance = currentBalance - amount;
+                const currentBonus = freshUser.bonus || 0;
+                const currentTotalBalance = currentBalance + currentBonus;
                 
                 // Only proceed if balance is sufficient (double check)
-                if (currentBalance >= amount) {
-                    await supabaseDb.updateUser(currentUser.idnum, { balance: newBalance });
+                if (currentTotalBalance >= amount) {
+                    const balanceDebit = Math.min(currentBalance, amount);
+                    const bonusDebit = amount - balanceDebit;
+                    const newBalance = currentBalance - balanceDebit;
+                    const newBonus = currentBonus - bonusDebit;
+
+                    await supabaseDb.updateUser(currentUser.idnum, { balance: newBalance, bonus: newBonus });
                     console.log('Balance deducted successfully');
                     
                     // Update local state immediately with the new balance
                     if (updateUser) {
-                        updateUser({ balance: newBalance }); 
+                        updateUser({ balance: newBalance, bonus: newBonus });
                     }
                     
                     // Force a full refresh to be sure
@@ -1450,13 +1673,6 @@ function UserDashboard() {
           );
         }
         
-        // Update local state - update user balance
-        if (currentUser) {
-          updateUser({
-            balance: (currentUser.balance || 0) - amount
-          })
-        }
-        
         addNotification(
           'Withdrawal Requested',
           `Your withdrawal request of $${amount.toLocaleString()} via ${withdrawalForm.method} has been submitted for processing.`,
@@ -1466,6 +1682,9 @@ function UserDashboard() {
       } catch (error) {
         console.error('Error creating withdrawal:', error)
         showAlert('error', t('alerts.failedToSubmitWithdrawalTitle'), t('alerts.failedToSubmitWithdrawalMessage'))
+      } finally {
+        withdrawalSubmitInFlightRef.current = false
+        setWithdrawalLoading(false)
       }
     }
   }
@@ -1481,6 +1700,8 @@ function UserDashboard() {
   }
 
   const closeWithdrawalModal = () => {
+    if (withdrawalLoading) return
+
     setShowWithdrawalModal(false)
     setWithdrawalStep('amount')
     setWithdrawalForm({
@@ -1533,6 +1754,10 @@ function UserDashboard() {
       }
       setLoanStep('confirm')
     } else if (loanStep === 'confirm') {
+      if (loanSubmitInFlightRef.current) return
+      loanSubmitInFlightRef.current = true
+      setLoanLoading(true)
+
       // Submit loan request to database
       try {
         const amount = parseFloat(loanForm.amount)
@@ -1633,6 +1858,9 @@ function UserDashboard() {
       } catch (error) {
         console.error('Error creating loan:', error)
         showAlert('error', t('alerts.loanSubmitFailedTitle'), t('alerts.loanSubmitFailedMessage'))
+      } finally {
+        loanSubmitInFlightRef.current = false
+        setLoanLoading(false)
       }
     }
   }
@@ -1650,6 +1878,8 @@ function UserDashboard() {
   }
 
   const closeLoanModal = () => {
+    if (loanLoading) return
+
     setShowLoanModal(false)
     setLoanStep('personal')
     setLoanForm({
@@ -1693,9 +1923,14 @@ function UserDashboard() {
 
   // Helper function for copying payment details
   const copyPaymentAddress = () => {
-    const method = paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods]
-    const textToCopy = 'address' in method ? method.address : 
-                       `Account: ${method.accountNumber}\nBank: ${method.bankName}\nRouting: ${method.routingNumber}`
+    const method = isCryptoPayment
+      ? selectedCryptoMethod
+      : paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods]
+    const textToCopy = 'address' in method
+      ? method.address
+      : 'accountNumber' in method
+        ? `Account: ${method.accountNumber}\nBank: ${method.bankName}\nRouting: ${method.routingNumber}`
+        : method.name
     
     navigator.clipboard.writeText(textToCopy)
     setPaymentCopied(true)
@@ -1703,12 +1938,54 @@ function UserDashboard() {
   }
 
   const handleSubmitInvestment = async () => {
+    let walletDebit: Awaited<ReturnType<typeof debitUserWallet>> | null = null
+
     try {
+      const now = Date.now()
+      if (investmentSubmitInFlightRef.current || isInvestmentSubmitting) {
+        showAlert('info', 'Submitting Investment', 'Your investment is already being submitted. Please hold on.')
+        return
+      }
+      if (investmentRetryAt > now) {
+        const secondsLeft = Math.ceil((investmentRetryAt - now) / 1000)
+        showAlert('warning', 'Please Hold On', `Network issue detected. Please wait ${secondsLeft} seconds before trying again.`)
+        return
+      }
+
       const capital = parseFloat(investmentForm.capital)
       if (isNaN(capital) || capital <= 0) {
         showAlert('error', 'Invalid Amount', 'Please enter a valid amount greater than 0')
         return
       }
+      if (capital < selectedPlan.minCapital) {
+        showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountMin', { min: selectedPlan.minCapital.toLocaleString() }))
+        return
+      }
+      if (selectedPlan.maxCapital && capital > selectedPlan.maxCapital) {
+        showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountMax', { max: selectedPlan.maxCapital.toLocaleString() }))
+        return
+      }
+
+      const isBalancePayment = investmentForm.paymentMethod === 'Balance'
+
+      if (!isBalancePayment) {
+        if (!investmentForm.transactionHash || investmentForm.transactionHash.trim() === '') {
+          showAlert('error', t('alerts.titleTransactionHashRequired'), t('alerts.transactionHashRequired'))
+          return
+        }
+        if (!investmentForm.bankSlip) {
+          showAlert('error', t('alerts.titlePaymentProofRequired'), t('alerts.paymentProofRequired'))
+          return
+        }
+      }
+
+      investmentSubmitInFlightRef.current = true
+      setIsInvestmentSubmitting(true)
+
+      if (isBalancePayment) {
+        walletDebit = await debitUserWallet(capital)
+      }
+
       const dailyRoi = capital * selectedPlan.dailyRate  // Daily earnings
       const totalExpectedRoi = dailyRoi * selectedPlan.durationDays  // Total expected over duration
       const bonus = capital * selectedPlan.referralBonus
@@ -1728,6 +2005,7 @@ function UserDashboard() {
         duration: selectedPlan.durationDays,
         daysCompleted: 0,            // No days completed yet
         paymentOption: investmentForm.paymentMethod,
+        transactionHash: isBalancePayment ? `BALANCE-${investmentSessionIdRef.current || Date.now()}` : investmentForm.transactionHash,
         authStatus: 'unseen',
         date: new Date().toISOString(),
         startDate: null               // Will be set when activated by admin
@@ -1762,6 +2040,14 @@ function UserDashboard() {
         }
       } catch (dbError) {
         console.error('Database save failed:', dbError);
+
+        if (isBalancePayment) {
+          if (walletDebit) {
+            await restoreUserWallet(walletDebit.previousBalance, walletDebit.previousBonus)
+          }
+          throw dbError
+        }
+
         console.log('Database unavailable, storing locally')
         investmentSaved = false;
         // Store in localStorage as fallback
@@ -1776,12 +2062,19 @@ function UserDashboard() {
       // Add notification for investment creation
       addNotification(
         t('notifications.investmentCreatedTitle'),
-        t('notifications.investmentCreatedMessage', { capital: capital.toLocaleString(), plan: selectedPlan.name, daily: dailyRoi.toLocaleString(), duration: selectedPlan.durationDays }),
+        isBalancePayment
+          ? `Your ${selectedPlan.name} investment of $${capital.toLocaleString()} has been created from your account balance.`
+          : t('notifications.investmentCreatedMessage', { capital: capital.toLocaleString(), plan: selectedPlan.name, daily: dailyRoi.toLocaleString(), duration: selectedPlan.durationDays }),
         'success'
       )
       
-      showAlert('success', t('alerts.investmentCreatedTitle'),
-        t('alerts.investmentCreatedMessage', { planName: selectedPlan.name, capital: capital.toLocaleString(), daily: dailyRoi.toLocaleString(), duration: selectedPlan.durationDays }))
+      showAlert(
+        'success',
+        t('alerts.investmentCreatedTitle'),
+        isBalancePayment
+          ? `Your ${selectedPlan.name} investment of $${capital.toLocaleString()} has been created from your account balance.`
+          : t('alerts.investmentCreatedMessage', { planName: selectedPlan.name, capital: capital.toLocaleString(), daily: dailyRoi.toLocaleString(), duration: selectedPlan.durationDays })
+      )
       
       setInvestmentStep('success')
       
@@ -1789,12 +2082,25 @@ function UserDashboard() {
         setShowInvestmentModal(false)
         setInvestmentStep('select')
         setSelectedPlan(null)
+        setIsInvestmentSubmitting(false)
+        setInvestmentRetryAt(0)
+        investmentSessionIdRef.current = ''
+        investmentSubmitInFlightRef.current = false
         setInvestmentForm({ capital: '', paymentMethod: 'Bitcoin', transactionHash: '', bankSlip: null })
         refreshUserBalance();
       }, 3000)
     } catch (error) {
       console.error('Error creating investment:', error)
-      showAlert('error', t('alerts.investmentFailedTitle'), t('alerts.investmentFailedMessage'))
+      setInvestmentRetryAt(Date.now() + 10000)
+      setIsInvestmentSubmitting(false)
+      investmentSubmitInFlightRef.current = false
+      showAlert(
+        'error',
+        t('alerts.investmentFailedTitle'),
+        error instanceof Error
+          ? `${error.message} Please hold on for 10 seconds before trying again.`
+          : `${t('alerts.investmentFailedMessage')} Please hold on for 10 seconds before trying again.`
+      )
     }
   }
 
@@ -1802,6 +2108,10 @@ function UserDashboard() {
     setShowInvestmentModal(false)
     setInvestmentStep('select')
     setSelectedPlan(null)
+    setIsInvestmentSubmitting(false)
+    setInvestmentRetryAt(0)
+    investmentSessionIdRef.current = ''
+    investmentSubmitInFlightRef.current = false
     setInvestmentForm({ capital: '', paymentMethod: 'Bitcoin', transactionHash: '', bankSlip: null })
   }
 
@@ -1825,10 +2135,17 @@ function UserDashboard() {
     return sum + profit + capitalReturned
   }, 0)
   const totalBalance = (currentUser?.balance || 0) + (currentUser?.bonus || 0)
+  const downlineCount = Math.max(currentUser?.referralCount || 0, downlineReferrals.length)
+  const downlineEarnings = Math.max(
+    currentUser?.referralBonusTotal || 0,
+    downlineReferrals.reduce((sum, referral) => sum + Number(referral.bonusEarned || 0), 0)
+  )
 
   // Deposit Final Submit Handler
   const handleFinalDepositSubmit = async () => {
+    if (depositSubmitInFlightRef.current) return;
     if (!currentUser?.idnum) return;
+    depositSubmitInFlightRef.current = true;
     setDepositLoading(true);
     setDepositError('');
 
@@ -1911,6 +2228,7 @@ function UserDashboard() {
       setDepositError(err.message || 'Failed to submit deposit');
       showAlert('error', 'Submission Failed', err.message || 'An error occurred during verification.');
     } finally {
+      depositSubmitInFlightRef.current = false;
       setDepositLoading(false);
     }
   }
@@ -1926,6 +2244,123 @@ function UserDashboard() {
 
   return (
     <div className="modern-dashboard">
+      {roiPopup.show && (
+        <div
+          onClick={closeRoiPopup}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(2, 6, 23, 0.72)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100000,
+            padding: '18px',
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 'min(460px, 100%)',
+              background: 'linear-gradient(145deg, #151a22 0%, #0f141b 100%)',
+              border: '1px solid rgba(240,185,11,0.22)',
+              borderRadius: '14px',
+              boxShadow: '0 24px 70px rgba(0,0,0,0.48)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '16px',
+                padding: '20px 20px 14px',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <div>
+                <p style={{ color: '#f0b90b', fontSize: '12px', fontWeight: 700, margin: '0 0 6px', textTransform: 'uppercase' }}>
+                  Return credited
+                </p>
+                <h2 style={{ color: '#f8fafc', fontSize: '22px', lineHeight: 1.2, margin: 0 }}>
+                  ${formatCurrency(roiPopup.total)} earned
+                </h2>
+              </div>
+              <button
+                onClick={closeRoiPopup}
+                aria-label="Close ROI summary"
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.05)',
+                  color: '#cbd5e1',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center',
+                }}
+              >
+                <i className="icofont-close"></i>
+              </button>
+            </div>
+
+            <div style={{ padding: '14px 20px 6px' }}>
+              {roiPopup.items.slice(0, 5).map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '14px',
+                    padding: '12px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#f8fafc', fontSize: '14px', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {item.plan}
+                    </div>
+                    <div style={{ color: '#94a3b8', fontSize: '12px', marginTop: '3px', textTransform: 'capitalize' }}>
+                      {item.status || 'credited'}
+                    </div>
+                  </div>
+                  <div style={{ color: '#4ade80', fontSize: '14px', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                    +${formatCurrency(item.amount)}
+                  </div>
+                </div>
+              ))}
+              {roiPopup.items.length > 5 && (
+                <p style={{ color: '#94a3b8', fontSize: '12px', margin: '12px 0 0' }}>
+                  {roiPopup.items.length - 5} more investment returns included.
+                </p>
+              )}
+            </div>
+
+            <div style={{ padding: '16px 20px 20px' }}>
+              <button
+                onClick={closeRoiPopup}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  borderRadius: '10px',
+                  background: 'linear-gradient(135deg, #f0b90b 0%, #f8d33a 100%)',
+                  color: '#111827',
+                  padding: '12px 16px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile Header Bar (mobile UX parity with AdminDashboard) */}
       <div className="mobile-header">
         <button
@@ -2089,7 +2524,7 @@ function UserDashboard() {
 
       {/* Main Content */}
       <main className="dashboard-main">
-        <DashboardMarquee />
+        <DashboardMarquee btcPrice={cryptoPrices.BTC} loading={cryptoLoading} />
         
         {/* KYC Warning Banner */}
         {currentUser?.authStatus?.toLowerCase() !== 'approved' && currentUser?.authStatus?.toLowerCase() !== 'verified' && (
@@ -2164,7 +2599,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Available Balance</p>
-                    <h2 className="stat-value">${(currentUser?.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
+                    <h2 className="stat-value">${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
                     <p className="stat-info">Ready for withdrawal</p>
                   </div>
                 </div>
@@ -2186,7 +2621,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Referrals</p>
-                    <h2 className="stat-value">{currentUser?.referralCount || 0}</h2>
+                    <h2 className="stat-value">{downlineCount}</h2>
                     <p className="stat-info">Active network members</p>
                   </div>
                 </div>
@@ -2349,7 +2784,7 @@ function UserDashboard() {
                         <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                           <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Select Network / Asset</label>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {Object.entries(paymentMethods).filter(([k]) => k !== 'Bank').map(([key, method]) => (
+                            {Object.entries(cryptoPaymentMethods).map(([key, method]) => (
                                 <button
                                   key={key}
                                   onClick={() => setSelectedDepositMethod(key)}
@@ -2372,26 +2807,26 @@ function UserDashboard() {
 
                       <div className="details-box" style={{ background: 'var(--bg)', padding: '1.5rem', borderRadius: 8, border: '1px solid var(--border)' }}>
                         <h4 style={{ fontSize: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Payment Instructions</h4>
-                         {'address' in paymentMethods[selectedDepositMethod as keyof typeof paymentMethods] ? (
+                         {'address' in externalPaymentMethods[selectedDepositMethod as keyof typeof externalPaymentMethods] ? (
                             <div className="crypto-details">
                               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
-                                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${(paymentMethods[selectedDepositMethod as keyof typeof paymentMethods] as any).address}`} alt="QR" style={{ border: '4px solid white' }} />
+                                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${(externalPaymentMethods[selectedDepositMethod as keyof typeof externalPaymentMethods] as any).address}`} alt="QR" style={{ border: '4px solid white' }} />
                               </div>
                               <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: 4 }}>Address:</p>
                               <div style={{ display: 'flex', gap: 8 }}>
-                                <code style={{ flex: 1, background: '#111', padding: 8, borderRadius: 4, wordBreak: 'break-all', color: 'var(--accent)' }}>{(paymentMethods[selectedDepositMethod as keyof typeof paymentMethods] as any).address}</code>
-                                <button onClick={() => handleCopy((paymentMethods[selectedDepositMethod as keyof typeof paymentMethods] as any).address || '')} style={{ background: 'var(--accent)', color: 'black', border: 'none', borderRadius: 4, width: 36, cursor: 'pointer' }}>
+                                <code style={{ flex: 1, background: '#111', padding: 8, borderRadius: 4, wordBreak: 'break-all', color: 'var(--accent)' }}>{(externalPaymentMethods[selectedDepositMethod as keyof typeof externalPaymentMethods] as any).address}</code>
+                                <button onClick={() => handleCopy((externalPaymentMethods[selectedDepositMethod as keyof typeof externalPaymentMethods] as any).address || '')} style={{ background: 'var(--accent)', color: 'black', border: 'none', borderRadius: 4, width: 36, cursor: 'pointer' }}>
                                   <i className="icofont-copy"></i>
                                 </button>
                               </div>
                             </div>
                          ) : (
                             <div className="bank-details">
-                                <p style={{ marginBottom: 4 }}><strong>Bank Name:</strong> {(paymentMethods['Bank'] as any).bankName}</p>
-                                <p style={{ marginBottom: 4 }}><strong>Account:</strong> {(paymentMethods['Bank'] as any).accountName}</p>
-                                <p style={{ marginBottom: 4 }}><strong>Number:</strong> {(paymentMethods['Bank'] as any).accountNumber} <i className="icofont-copy" style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => handleCopy((paymentMethods['Bank'] as any).accountNumber)}></i></p>
-                                <p style={{ marginBottom: 4 }}><strong>Routing:</strong> {(paymentMethods['Bank'] as any).routingNumber}</p>
-                                <p><strong>SWIFT:</strong> {(paymentMethods['Bank'] as any).swiftCode}</p>
+                                <p style={{ marginBottom: 4 }}><strong>Bank Name:</strong> {(externalPaymentMethods['Bank'] as any).bankName}</p>
+                                <p style={{ marginBottom: 4 }}><strong>Account:</strong> {(externalPaymentMethods['Bank'] as any).accountName}</p>
+                                <p style={{ marginBottom: 4 }}><strong>Number:</strong> {(externalPaymentMethods['Bank'] as any).accountNumber} <i className="icofont-copy" style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => handleCopy((externalPaymentMethods['Bank'] as any).accountNumber)}></i></p>
+                                <p style={{ marginBottom: 4 }}><strong>Routing:</strong> {(externalPaymentMethods['Bank'] as any).routingNumber}</p>
+                                <p><strong>SWIFT:</strong> {(externalPaymentMethods['Bank'] as any).swiftCode}</p>
                             </div>
                          )}
                       </div>
@@ -2472,7 +2907,7 @@ function UserDashboard() {
                         </div>
                         <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Method</span>
-                          <strong>{(paymentMethods[selectedDepositMethod as keyof typeof paymentMethods] as any).name}</strong>
+                          <strong>{(externalPaymentMethods[selectedDepositMethod as keyof typeof externalPaymentMethods] as any).name}</strong>
                         </div>
                         <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Tx Hash</span>
@@ -2493,9 +2928,10 @@ function UserDashboard() {
                          <button onClick={() => setDepositStep(3)} style={{ padding: '0.75rem 1.5rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, cursor: 'pointer' }}>Back</button>
                          <button 
                             onClick={handleFinalDepositSubmit}
-                            style={{ padding: '0.75rem 2rem', background: 'var(--accent)', color: 'black', fontWeight: 'bold', border: 'none', borderRadius: 8, cursor: 'pointer' }}
+                            disabled={depositLoading}
+                            style={{ padding: '0.75rem 2rem', background: depositLoading ? 'rgba(240,185,11,0.55)' : 'var(--accent)', color: 'black', fontWeight: 'bold', border: 'none', borderRadius: 8, cursor: depositLoading ? 'not-allowed' : 'pointer' }}
                           >
-                           Submit Application
+                           {depositLoading ? 'Submitting...' : 'Submit Application'}
                          </button>
                       </div>
                     </div>
@@ -2578,7 +3014,7 @@ function UserDashboard() {
                   <div className="stat-details">
                     <p className="stat-label">Fiat Balance</p>
                     <h2 className="stat-value">${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
-                    <p className="stat-change positive"><i className="icofont-check-circled"></i> Available: ${(currentUser?.balance || 0).toLocaleString()}</p>
+                    <p className="stat-change positive"><i className="icofont-check-circled"></i> Available: ${totalBalance.toLocaleString()}</p>
                     <p className="stat-info" style={{ color: '#f0b90b' }}><i className="icofont-gift"></i> Bonus: +${(currentUser?.bonus || 0).toLocaleString()}</p>
                   </div>
                 </div>
@@ -2771,7 +3207,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Referral Bonus</p>
-                    <h2 className="stat-value">${(currentUser?.referralBonusTotal || 0).toLocaleString()}</h2>
+                    <h2 className="stat-value">${downlineEarnings.toLocaleString()}</h2>
                     <p className="stat-info">From referrals</p>
                   </div>
                 </div>
@@ -3020,8 +3456,8 @@ function UserDashboard() {
                             {inv.status?.toLowerCase() === 'rejected' 
                               ? 'Rejected'
                               : inv.status?.toLowerCase() === 'active' 
-                              ? `+$${(inv.earnedRoi || inv.roi || 0).toLocaleString()} earned`
-                              : `+$${(inv.totalExpectedRoi || inv.roi || 0).toLocaleString()}`
+                              ? `+$${formatCurrency(getInvestmentEarnings(inv))} earned`
+                              : `+$${formatCurrency(getInvestmentEarnings(inv) || inv.totalExpectedRoi || inv.roi || 0)}`
                             }
                           </div>
                           {inv.status === 'active' && inv.dailyRoi && (
@@ -3844,7 +4280,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Referrals</p>
-                    <h2 className="stat-value">{currentUser?.referralCount || 0}</h2>
+                    <h2 className="stat-value">{downlineCount}</h2>
                     <p className="stat-info">Network members</p>
                   </div>
                 </div>
@@ -4362,7 +4798,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Total Downline</p>
-                    <h2 className="stat-value">{currentUser?.referralCount || 0}</h2>
+                    <h2 className="stat-value">{downlineCount}</h2>
                     <p className="stat-info">Network members</p>
                   </div>
                 </div>
@@ -4373,7 +4809,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Downline Earnings</p>
-                    <h2 className="stat-value">$0</h2>
+                    <h2 className="stat-value">${downlineEarnings.toLocaleString()}</h2>
                     <p className="stat-info">Total commissions</p>
                   </div>
                 </div>
@@ -4444,21 +4880,23 @@ function UserDashboard() {
                   <h3><i className="icofont-history"></i> Referral History</h3>
                   <button className="view-all">View All →</button>
                 </div>
-                {currentUser?.referralCount && currentUser.referralCount > 0 ? (
+                {downlineReferrals.length > 0 ? (
                   <div className="activity-list">
-                    <div className="activity-item">
-                      <div className="activity-icon">
-                        <i className="icofont-user"></i>
+                    {downlineReferrals.map((referral, idx) => (
+                      <div className="activity-item" key={referral.id || referral.referredId || idx}>
+                        <div className="activity-icon">
+                          <i className="icofont-user"></i>
+                        </div>
+                        <div className="activity-details">
+                          <h4>{getReferralUsername(referral)}</h4>
+                          <p>{getReferralDetails(referral)}</p>
+                        </div>
+                        <div className="activity-amount positive">
+                          +${formatCurrency(referral.bonusEarned || 0)}
+                        </div>
+                        <span className="status-badge active">Active</span>
                       </div>
-                      <div className="activity-details">
-                        <h4>user***{Math.floor(Math.random() * 1000)}</h4>
-                        <p>{new Date().toLocaleDateString()}</p>
-                      </div>
-                      <div className="activity-amount positive">
-                        +$25.00
-                      </div>
-                      <span className="status-badge active">Active</span>
-                    </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="empty-state">
@@ -4796,8 +5234,8 @@ function UserDashboard() {
                 </div>
 
                 <div style={{ marginTop: '1rem' }}>
-                  <p style={{ color: '#94a3b8' }}><strong>Referrals:</strong> {currentUser?.referralCount || 0}</p>
-                  <p style={{ color: '#94a3b8' }}><strong>Referral Bonus:</strong> ${(currentUser?.referralBonusTotal || 0).toLocaleString()}</p>
+                  <p style={{ color: '#94a3b8' }}><strong>Referrals:</strong> {downlineCount}</p>
+                  <p style={{ color: '#94a3b8' }}><strong>Referral Bonus:</strong> ${downlineEarnings.toLocaleString()}</p>
                   <p style={{ color: '#94a3b8', marginTop: '0.5rem' }}>Share this link and earn commission when your referees invest.</p>
                 </div>
               </div>
@@ -4944,13 +5382,12 @@ function UserDashboard() {
             {investmentStep === 'confirm' && (
               <div className="modal-content">
                 <div className="modal-header">
-                  <h2><i className="icofont-verify"></i> Confirm Investment</h2>
-                  <p>Review your investment details</p>
+                  <h2><i className="icofont-chart-growth"></i> Investment Summary</h2>
+                  <p>{selectedPlan.name}</p>
                 </div>
 
                 <div className="modal-body">
                   <div className="confirmation-card">
-                    <h3>Investment Summary</h3>
                     <div className="confirm-row">
                       <span>Plan</span>
                       <strong>{selectedPlan.name}</strong>
@@ -4968,21 +5405,17 @@ function UserDashboard() {
                       <strong>{selectedPlan.durationLabel}</strong>
                     </div>
                     <div className="confirm-row">
-                      <span>Total Expected (credited daily)</span>
+                      <span>Total Expected Return</span>
                       <strong>
                         ${(parseFloat(investmentForm.capital) * selectedPlan.dailyRate * selectedPlan.durationDays).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </strong>
                     </div>
-                    <div className="confirm-row">
-                      <span>Payment Method</span>
-                      <strong>{paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods].name}</strong>
-                    </div>
                   </div>
 
                   <div className="warning-box">
-                    <i className="icofont-warning"></i>
+                    <i className="icofont-info-circle"></i>
                     <div>
-                      <strong>How it works:</strong> Your earnings are credited daily to your balance. You'll receive ${(parseFloat(investmentForm.capital) * selectedPlan.dailyRate).toLocaleString()} every day for {selectedPlan.durationDays} days.
+                      Daily earnings are credited after admin approval.
                     </div>
                   </div>
                 </div>
@@ -4992,7 +5425,7 @@ function UserDashboard() {
                     <i className="icofont-arrow-left"></i> Back
                   </button>
                   <button className="btn-primary" onClick={handleInvestmentNext}>
-                    Proceed to Payment <i className="icofont-arrow-right"></i>
+                    Choose Payment Method <i className="icofont-arrow-right"></i>
                   </button>
                 </div>
               </div>
@@ -5002,60 +5435,92 @@ function UserDashboard() {
             {investmentStep === 'choose-method' && (
               <div className="modal-content">
                 <div className="modal-header">
-                  <h2><i className="icofont-wallet"></i> Select Payment Method</h2>
-                  <p>Please choose your preferred payment method to continue.</p>
+                  <h2><i className="icofont-wallet"></i> Payment Method</h2>
+                  <p>Select how you want to fund this investment.</p>
                 </div>
                 <div className="modal-body">
-                  <div className="payment-methods-list" style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  <div className="payment-methods-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
                     {Object.entries(paymentMethods).map(([key, method]) => (
                       <div
                         key={key}
                         className={`payment-method-card${investmentForm.paymentMethod === key ? ' selected' : ''}`}
                         style={{
-                          border: investmentForm.paymentMethod === key ? '1.5px solid var(--accent)' : '1px solid var(--border)',
-                          borderRadius: 8,
-                          padding: '0.5rem 0.9rem',
-                          minWidth: 0,
-                          minHeight: 0,
+                          border: (key === 'Crypto' ? isCryptoPayment : investmentForm.paymentMethod === key) ? '1px solid #f0b90b' : '1px solid rgba(255,255,255,0.12)',
+                          borderRadius: 6,
+                          padding: '0.85rem',
                           cursor: 'pointer',
-                          background: investmentForm.paymentMethod === key
-                            ? 'linear-gradient(90deg, rgba(240,185,11,0.10) 0%, rgba(24,26,32,0.95) 100%)'
-                            : 'var(--surface)',
+                          background: (key === 'Crypto' ? isCryptoPayment : investmentForm.paymentMethod === key) ? 'rgba(240,185,11,0.08)' : 'rgba(255,255,255,0.03)',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 10,
-                          boxShadow: investmentForm.paymentMethod === key ? '0 2px 8px rgba(240,185,11,0.10)' : '0 1px 3px rgba(0,0,0,0.03)',
-                          transition: 'all 0.18s',
+                          textAlign: 'left',
                           fontSize: 15,
-                          marginBottom: 0,
-                          marginRight: 0,
-                          flex: '1 0 140px',
-                          maxWidth: 180
                         }}
-                        onClick={() => setInvestmentForm({ ...investmentForm, paymentMethod: key })}
-                        onMouseOver={e => (e.currentTarget.style.background = investmentForm.paymentMethod === key ? 'linear-gradient(90deg, rgba(240,185,11,0.13) 0%, rgba(24,26,32,1) 100%)' : 'var(--bg)')}
-                        onMouseOut={e => (e.currentTarget.style.background = investmentForm.paymentMethod === key ? 'linear-gradient(90deg, rgba(240,185,11,0.10) 0%, rgba(24,26,32,0.95) 100%)' : 'var(--surface)')}
+                        onClick={() => {
+                          if (key === 'Crypto') {
+                            setInvestmentForm({ ...investmentForm, paymentMethod: 'Bitcoin', transactionHash: '', bankSlip: null })
+                            setInvestmentStep('payment')
+                            return
+                          }
+                          setInvestmentForm({ ...investmentForm, paymentMethod: key, transactionHash: '', bankSlip: null })
+                        }}
                       >
-                        <span style={{ fontSize: 22, marginRight: 6 }}>{method.icon}</span>
-                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                          <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{method.name}</span>
-                          {'network' in method && (
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{method.network}</span>
-                          )}
+                        <span style={{ fontSize: 18, color: '#f0b90b', width: 24, textAlign: 'center' }}>{method.icon}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{method.name}</span>
                           {'bankName' in method && (
                             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{method.bankName}</span>
+                          )}
+                          {'description' in method && (
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{method.description}</span>
+                          )}
+                          {key === 'Crypto' && (
+                            <label className="crypto-network-select-wrap" onClick={(event) => event.stopPropagation()}>
+                              <span className="crypto-network-label">Network</span>
+                              <span className="crypto-network-select-shell">
+                                <i className="icofont-coins crypto-network-icon"></i>
+                                <select
+                                  className="crypto-network-select"
+                                  value={isCryptoPayment ? investmentForm.paymentMethod : 'Bitcoin'}
+                                  onChange={(event) => {
+                                    setInvestmentForm({
+                                      ...investmentForm,
+                                      paymentMethod: event.target.value,
+                                      transactionHash: '',
+                                      bankSlip: null,
+                                    })
+                                    setInvestmentStep('payment')
+                                  }}
+                                >
+                                  {Object.entries(cryptoPaymentMethods).map(([cryptoKey, cryptoMethod]) => (
+                                    <option key={cryptoKey} value={cryptoKey}>
+                                      {cryptoMethod.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <i className="icofont-rounded-down crypto-network-chevron"></i>
+                              </span>
+                            </label>
                           )}
                         </div>
                       </div>
                     ))}
                   </div>
+                  {investmentForm.paymentMethod === 'Balance' && (
+                    <div className="warning-box" style={{ marginTop: '1rem' }}>
+                      <i className="icofont-wallet"></i>
+                      <div>
+                        Available balance: ${formatCurrency(totalBalance)}. The investment amount will be deducted immediately and held while the investment is pending approval.
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="modal-footer">
                   <button className="btn-secondary" onClick={handleInvestmentBack}>
                     <i className="icofont-arrow-left"></i> Back
                   </button>
-                  <button className="btn-primary" onClick={handleInvestmentNext}>
-                    Continue <i className="icofont-arrow-right"></i>
+                  <button className="btn-primary" onClick={handleInvestmentNext} disabled={isInvestmentSubmitting}>
+                    {investmentForm.paymentMethod === 'Balance' ? 'Invest From Balance' : 'Continue'} <i className="icofont-arrow-right"></i>
                   </button>
                 </div>
               </div>
@@ -5065,8 +5530,8 @@ function UserDashboard() {
             {investmentStep === 'payment' && (
               <div className="modal-content">
                 <div className="modal-header">
-                  <h2><i className="icofont-pay"></i> Complete Payment</h2>
-                  <p>Send payment to activate your investment</p>
+                  <h2><i className="icofont-pay"></i> Payment Details</h2>
+                  <p>{selectedPaymentName}</p>
                 </div>
 
                 <div className="modal-body">
@@ -5086,7 +5551,7 @@ function UserDashboard() {
 
                         <div className="amount-preview">
                           <div className="amount-value">${(investmentForm.capital && !isNaN(parseFloat(investmentForm.capital)) ? parseFloat(investmentForm.capital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00')}</div>
-                          <div className="amount-method">via {paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods].name}</div>
+                          <div className="amount-method">via {selectedPaymentName}</div>
                         </div>
                       </div>
                       <small style={{ color: 'var(--muted)', display: 'block', marginTop: '0.5rem' }}>You can edit the amount before making payment.</small>
@@ -5096,20 +5561,12 @@ function UserDashboard() {
                       <div className="crypto-payment-details">
                         <div className="detail-row">
                           <span className="detail-label">Network</span>
-                          <span className="detail-value">
-                            {'network' in paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods] 
-                              ? (paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods] as any).network 
-                              : ''}
-                          </span>
+                          <span className="detail-value">{selectedCryptoMethod.network}</span>
                         </div>
                         <div className="detail-row">
                           <span className="detail-label">Wallet Address</span>
                           <div className="address-box">
-                            <code>
-                              {'address' in paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods] 
-                                ? (paymentMethods[investmentForm.paymentMethod as keyof typeof paymentMethods] as any).address 
-                                : ''}
-                            </code>
+                            <code>{selectedCryptoMethod.address}</code>
                             <button className="copy-btn" onClick={copyPaymentAddress}>
                               {paymentCopied ? <i className="icofont-check"></i> : <i className="icofont-copy"></i>}
                             </button>
@@ -5206,11 +5663,10 @@ function UserDashboard() {
                     )}
 
                     <div className="payment-notes">
-                      <h4><i className="icofont-info-circle"></i> Important Notes</h4>
+                      <h4><i className="icofont-info-circle"></i> Notes</h4>
                       <ul>
                         <li>Send the exact amount specified above</li>
                         <li>Your investment will be activated after payment confirmation</li>
-                        <li>Processing time: 1-3 confirmations for crypto, 1-2 business days for bank transfer</li>
                         <li>Contact support if you have any issues</li>
                       </ul>
                     </div>
@@ -5221,8 +5677,8 @@ function UserDashboard() {
                   <button className="btn-secondary" onClick={handleInvestmentBack}>
                     <i className="icofont-arrow-left"></i> Back
                   </button>
-                  <button className="btn-primary" onClick={handleSubmitInvestment}>
-                    <i className="icofont-check"></i> I've Made Payment
+                  <button className="btn-primary" onClick={handleSubmitInvestment} disabled={isInvestmentSubmitting}>
+                    <i className={isInvestmentSubmitting ? 'icofont-spinner-alt-3' : 'icofont-check'}></i> {isInvestmentSubmitting ? 'Submitting...' : 'Submit Investment'}
                   </button>
                 </div>
               </div>
@@ -6173,6 +6629,7 @@ function UserDashboard() {
               {withdrawalStep !== 'amount' && withdrawalStep !== 'success' && (
                 <button
                   onClick={handleWithdrawalBack}
+                  disabled={withdrawalLoading}
                   style={{
                     padding: '0.75rem 1.5rem',
                     background: 'rgba(255,255,255,0.1)',
@@ -6181,7 +6638,8 @@ function UserDashboard() {
                     color: '#f8fafc',
                     fontSize: '0.875rem',
                     fontWeight: 500,
-                    cursor: 'pointer'
+                    cursor: withdrawalLoading ? 'not-allowed' : 'pointer',
+                    opacity: withdrawalLoading ? 0.6 : 1
                   }}
                 >
                   Back
@@ -6190,19 +6648,20 @@ function UserDashboard() {
               {withdrawalStep !== 'success' && (
                 <button
                   onClick={handleWithdrawalNext}
+                  disabled={withdrawalLoading}
                   style={{
                     padding: '0.75rem 1.5rem',
-                    background: 'linear-gradient(135deg, #f0b90b 0%, #f8d12f 100%)',
+                    background: withdrawalLoading ? 'rgba(240,185,11,0.55)' : 'linear-gradient(135deg, #f0b90b 0%, #f8d12f 100%)',
                     border: 'none',
                     borderRadius: '8px',
                     color: '#0f172a',
                     fontSize: '0.875rem',
                     fontWeight: 600,
-                    cursor: 'pointer',
+                    cursor: withdrawalLoading ? 'not-allowed' : 'pointer',
                     boxShadow: '0 4px 12px rgba(240,185,11,0.3)'
                   }}
                 >
-                  {withdrawalStep === 'confirm' ? 'Submit Request' : 'Continue'}
+                  {withdrawalLoading ? 'Submitting...' : withdrawalStep === 'confirm' ? 'Submit Request' : 'Continue'}
                 </button>
               )}
               {withdrawalStep === 'success' && (
@@ -7080,6 +7539,7 @@ function UserDashboard() {
               {loanStep !== 'personal' && loanStep !== 'success' && (
                 <button
                   onClick={handleLoanBack}
+                  disabled={loanLoading}
                   style={{
                     padding: '0.75rem 1.5rem',
                     background: 'rgba(255,255,255,0.1)',
@@ -7088,7 +7548,8 @@ function UserDashboard() {
                     color: '#f8fafc',
                     fontSize: '0.875rem',
                     fontWeight: 500,
-                    cursor: 'pointer'
+                    cursor: loanLoading ? 'not-allowed' : 'pointer',
+                    opacity: loanLoading ? 0.6 : 1
                   }}
                 >
                   Back
@@ -7097,19 +7558,20 @@ function UserDashboard() {
               {loanStep !== 'success' && (
                 <button
                   onClick={handleLoanNext}
+                  disabled={loanLoading}
                   style={{
                     padding: '0.75rem 1.5rem',
-                    background: 'linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%)',
+                    background: loanLoading ? 'rgba(59,130,246,0.55)' : 'linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%)',
                     border: 'none',
                     borderRadius: '8px',
                     color: '#fff',
                     fontSize: '0.875rem',
                     fontWeight: 600,
-                    cursor: 'pointer',
+                    cursor: loanLoading ? 'not-allowed' : 'pointer',
                     boxShadow: '0 4px 12px rgba(59,130,246,0.3)'
                   }}
                 >
-                  {loanStep === 'confirm' ? 'Submit Application' : 'Continue'}
+                  {loanLoading ? 'Submitting...' : loanStep === 'confirm' ? 'Submit Application' : 'Continue'}
                 </button>
               )}
               {loanStep === 'success' && (

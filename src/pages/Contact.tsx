@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 function Contact() {
   const [formData, setFormData] = useState({
@@ -8,15 +8,22 @@ function Contact() {
     message: ''
   })
   const [status, setStatus] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submitInFlightRef = useRef(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submitInFlightRef.current) return
+    submitInFlightRef.current = true
+    setIsSubmitting(true)
     setStatus('Sending...')
     
     // Simulate form submission
     setTimeout(() => {
       setStatus('Message sent successfully! We\'ll get back to you within 2 business days.')
       setFormData({ name: '', email: '', subject: '', message: '' })
+      submitInFlightRef.current = false
+      setIsSubmitting(false)
     }, 1000)
   }
 
@@ -86,8 +93,8 @@ function Contact() {
           </div>
 
           <div className="contact-form__footer">
-            <button type="submit" className="btn btn--primary">
-              Send Message
+            <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
+              {isSubmitting ? 'Sending...' : 'Send Message'}
             </button>
             <small className="contact-form__email">
               Use this form and our team will reply through the contact details you provide.

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
@@ -73,6 +73,22 @@ function AdminDashboard() {
   const [selectedBonusUser, setSelectedBonusUser] = useState<any>(null)
   const [bonusSearchTerm, setBonusSearchTerm] = useState('')
   const [kycActionId, setKycActionId] = useState<string | null>(null)
+  const [adminActionKeys, setAdminActionKeys] = useState<Set<string>>(new Set())
+  const adminActionInFlightRef = useRef(new Set<string>())
+
+  const startAdminAction = (key: string) => {
+    if (adminActionInFlightRef.current.has(key)) return false
+    adminActionInFlightRef.current.add(key)
+    setAdminActionKeys(new Set(adminActionInFlightRef.current))
+    return true
+  }
+
+  const finishAdminAction = (key: string) => {
+    adminActionInFlightRef.current.delete(key)
+    setAdminActionKeys(new Set(adminActionInFlightRef.current))
+  }
+
+  const isAdminActionRunning = (key: string) => adminActionKeys.has(key)
 
   const normalizeStatus = (status?: string | null) => (status || '').toLowerCase()
   const isStatus = (status: string | null | undefined, expected: string) =>
@@ -504,6 +520,9 @@ function AdminDashboard() {
   }
 
   const handleApproveInvestment = async (investmentId: string) => {
+    const actionKey = `approve-investment:${investmentId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       console.log('Approving investment:', investmentId)
       
@@ -549,10 +568,15 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error approving investment:', error)
       showAlert('error', t('alerts.approvalFailedTitle'), t('alerts.approvalFailedMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
   const handleRejectInvestment = async (investmentId: string) => {
+    const actionKey = `reject-investment:${investmentId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       const investment = allInvestments.find(inv => inv.id === investmentId)
 
@@ -593,6 +617,8 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error rejecting investment:', error)
       showAlert('error', t('alerts.rejectionFailedTitle'), t('alerts.rejectionFailedMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
@@ -631,6 +657,9 @@ function AdminDashboard() {
   }
 
   const handleApproveWithdrawal = async (withdrawalId: number) => {
+    const actionKey = `approve-withdrawal:${withdrawalId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       // Backend-driven approval (handles email + notification server-side)
       const approved = await supabaseDb.approveWithdrawal(withdrawalId.toString())
@@ -648,10 +677,15 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error approving withdrawal:', error)
       showAlert('error', t('alerts.approvalFailedTitle'), t('alerts.approvalErrorMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
   const handleRejectWithdrawal = async (withdrawalId: number) => {
+    const actionKey = `reject-withdrawal:${withdrawalId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       // Update status in database
       await supabaseDb.updateWithdrawal(withdrawalId.toString(), { 
@@ -698,10 +732,15 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error rejecting withdrawal:', error)
       showAlert('error', t('alerts.rejectionFailedTitle'), t('alerts.rejectionFailedMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
   const handleApproveDeposit = async (depositId: string, userId: string, amount: number) => {
+    const actionKey = `approve-deposit:${depositId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       console.log('\n' + '='.repeat(70));
       console.log('🔄 DEPOSIT APPROVAL FLOW STARTED');
@@ -795,10 +834,15 @@ function AdminDashboard() {
       console.error('❌ DEPOSIT APPROVAL FAILED:', error)
       console.error('='.repeat(70) + '\n');
       showAlert('error', 'Error', 'Failed to approve deposit')
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
   const handleRejectDeposit = async (depositId: string) => {
+    const actionKey = `reject-deposit:${depositId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       await supabaseDb.updateDeposit(depositId, { status: 'Rejected' })
 
@@ -845,6 +889,8 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error rejecting deposit:', error)
       showAlert('error', 'Error', 'Failed to reject deposit')
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
@@ -861,6 +907,9 @@ function AdminDashboard() {
   }
 
   const handleApproveKyc = async (kycId: string) => {
+    const actionKey = `approve-kyc:${kycId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       setKycActionId(kycId)
       const kyc = allKycRequests.find(k => k.id === kycId)
@@ -896,10 +945,14 @@ function AdminDashboard() {
       showAlert('error', t('alerts.kycApprovedError'), t('alerts.kycApprovedError'))
     } finally {
       setKycActionId(null)
+      finishAdminAction(actionKey)
     }
   }
 
   const handleRejectKyc = async (kycId: string, rejectionReason?: string) => {
+    const actionKey = `reject-kyc:${kycId}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       setKycActionId(kycId)
       const kyc = allKycRequests.find(k => k.id === kycId)
@@ -935,6 +988,7 @@ function AdminDashboard() {
       showAlert('error', t('alerts.kycRejectedError'), t('alerts.kycRejectedError'))
     } finally {
       setKycActionId(null)
+      finishAdminAction(actionKey)
     }
   }
 
@@ -947,15 +1001,19 @@ function AdminDashboard() {
 
   const handleUpdateUserBalance = async () => {
     if (!selectedUser || !newBalance) return
+    const actionKey = `update-balance:${selectedUser.idnum || selectedUser.id || 'selected'}`
+    if (!startAdminAction(actionKey)) return
     
     if (!balanceUpdateReason.trim()) {
         showAlert('warning', 'Reason Required', 'Please provide a reason for the balance update.')
+        finishAdminAction(actionKey)
         return
     }
 
     const balance = parseFloat(newBalance)
     if (isNaN(balance) || balance < 0) {
       showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountError'))
+      finishAdminAction(actionKey)
       return
     }
 
@@ -993,6 +1051,8 @@ function AdminDashboard() {
     } catch (error) {
         console.error('Failed to update balance:', error)
         showAlert('error', 'Update Failed', 'Could not update user balance.')
+    } finally {
+        finishAdminAction(actionKey)
     }
   }
 
@@ -1048,6 +1108,9 @@ function AdminDashboard() {
 
   // Loan approval/rejection handlers
   const handleApproveLoan = async (loan: any) => {
+    const actionKey = `approve-loan:${loan.id}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       // Send email notification
       await sendLoanNotification(
@@ -1063,10 +1126,15 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error approving loan:', error)
       showAlert('error', t('alerts.approvalFailedTitle'), t('alerts.approvalFailedMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
   const handleRejectLoan = async (loan: any) => {
+    const actionKey = `reject-loan:${loan.id}`
+    if (!startAdminAction(actionKey)) return
+
     try {
       // Send email notification
       await sendLoanNotification(
@@ -1082,6 +1150,8 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error rejecting loan:', error)
       showAlert('error', t('alerts.rejectionFailedTitle'), t('alerts.rejectionFailedMessage'))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 
@@ -1095,6 +1165,9 @@ function AdminDashboard() {
       showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountError'))
       return
     }
+
+    const actionKey = `add-bonus:${selectedBonusUser.idnum || selectedBonusUser.id}`
+    if (!startAdminAction(actionKey)) return
 
     try {
       const amount = parseFloat(bonusAmount)
@@ -1148,6 +1221,8 @@ function AdminDashboard() {
     } catch (error) {
       console.error('Error adding amount:', error)
       showAlert('error', t('alerts.addAmountError', { defaultValue: 'Addition Failed' }), t('alerts.addAmountErrorMessage', { defaultValue: 'Failed to add amount. Please try again.' }))
+    } finally {
+      finishAdminAction(actionKey)
     }
   }
 

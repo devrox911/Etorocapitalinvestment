@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabaseDb } from '@/lib/supabaseUtils';
 import { supabase } from '@/config/supabase';
@@ -59,6 +59,7 @@ const Deposit: React.FC = () => {
   });
   const [copied, setCopied] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitInFlightRef = useRef(false);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -118,6 +119,8 @@ const Deposit: React.FC = () => {
   };
 
   const handleSubmitDeposit = async () => {
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
     try {
       // Get current user
@@ -205,6 +208,7 @@ const Deposit: React.FC = () => {
       console.error('Error submitting deposit:', error);
       alert('Failed to submit deposit. Please try again.');
     } finally {
+      submitInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };

@@ -1,4 +1,4 @@
-import { FormEvent, useState, useEffect } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
@@ -22,6 +22,7 @@ function Signup() {
   })
   const [status, setStatus] = useState<Status>({ state: 'idle' })
   const [showPassword, setShowPassword] = useState(false)
+  const submitInFlightRef = useRef(false)
   const [searchParams] = useSearchParams()
   const { signup } = useAuth()
   const navigate = useNavigate()
@@ -36,6 +37,7 @@ function Signup() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (submitInFlightRef.current) return
 
     if (form.password !== form.confirmPassword) {
       setStatus({ state: 'error', message: 'Passwords do not match' })
@@ -57,6 +59,7 @@ function Signup() {
       return
     }
 
+    submitInFlightRef.current = true
     setStatus({ state: 'loading', message: 'Creating your account…' })
 
     try {
@@ -88,6 +91,7 @@ function Signup() {
       }
       
       setStatus({ state: 'error', message: errorMessage })
+      submitInFlightRef.current = false
     }
   }
 

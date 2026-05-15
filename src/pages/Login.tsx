@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
@@ -12,11 +12,14 @@ function Login() {
   const [form, setForm] = useState({ email: '', password: '' })
   const [status, setStatus] = useState<Status>({ state: 'idle' })
   const [showPassword, setShowPassword] = useState(false)
+  const submitInFlightRef = useRef(false)
   const { login } = useAuth()
   const navigate = useNavigate()
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (submitInFlightRef.current) return
+    submitInFlightRef.current = true
     setStatus({ state: 'loading', message: 'Authenticating…' })
 
     try {
@@ -25,6 +28,7 @@ function Login() {
 
       if (!result.success) {
         setStatus({ state: 'error', message: 'Invalid email/username or password' })
+        submitInFlightRef.current = false
         return
       }
 
@@ -53,6 +57,7 @@ function Login() {
       setTimeout(() => { window.location.href = redirectPath }, 1000)
     } catch (error: any) {
       setStatus({ state: 'error', message: error?.message || 'Login failed. Please try again.' })
+      submitInFlightRef.current = false
     }
   }
 

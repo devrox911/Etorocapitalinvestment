@@ -17,6 +17,13 @@ export const htmlToText = (html = '') =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const minifyEmailHtml = (html = '') =>
+  html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/>\s+</g, '><')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
 const getSender = () => ({
   email:
     process.env.EMAIL_FROM ||
@@ -161,7 +168,12 @@ export const sendTransactionalEmail = async ({
 
   const sender = getSender();
   const replyTo = getReplyTo(replyToEmail, replyToName);
-  const { html: normalizedHtml, attachments } = inlineStandardLogo(html || '');
+  const compactHtml = minifyEmailHtml(html || '');
+  if (compactHtml.length > 90000) {
+    console.warn(`Email HTML is ${compactHtml.length} bytes before transport; Gmail may clip messages above roughly 102KB.`);
+  }
+
+  const { html: normalizedHtml, attachments } = inlineStandardLogo(compactHtml);
   const normalizedText = text || htmlToText(normalizedHtml);
 
   const result = await sendViaSmtp({

@@ -21,8 +21,6 @@ const styles = `
   .footer { background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); color: #6b7280; padding: 30px 20px; text-align: center; font-size: 11px; border-top: 2px solid #f0b90b; }
   .footer p { margin: 5px 0; line-height: 1.6; }
   .footer-divider { height: 1px; background: #e5e7eb; margin: 15px 0; }
-  .footer-confidential { background: #fef3c7; color: #92400e; padding: 12px 15px; border-radius: 6px; margin: 15px 0; border-left: 3px solid #f0b90b; font-weight: 600; font-size: 10px; }
-  .footer-privacy { color: #9ca3af; font-size: 10px; margin: 10px 0; font-style: italic; }
   .translate-box { margin: 24px 0 0; padding: 16px; text-align: center; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; }
   .translate-box p { margin: 0 0 10px; color: #475569; font-size: 13px; }
   .translate-link { display: inline-block; padding: 9px 16px; background: #ffffff; color: #0f172a; text-decoration: none; border: 1px solid #d1d5db; border-radius: 6px; font-weight: 600; font-size: 13px; }
@@ -73,12 +71,7 @@ const wrapTemplate = (title, bodyContent) => `
     <div class="footer">
       <p>&copy; ${new Date().getFullYear()} eToro Trust Capital. All rights reserved.</p>
       <div class="footer-divider"></div>
-      <div class="footer-confidential">
-        CONFIDENTIAL: This email contains confidential and privileged information intended solely for the use of the addressee. If you are not the intended recipient, you are hereby notified that any dissemination, distribution, or copying of this email is strictly prohibited.
-      </div>
-      <div class="footer-privacy">
-        PRIVACY & SECURITY: Do not share this email or your account credentials with anyone. eToro Trust Capital staff will never ask for your password or sensitive information via email.
-      </div>
+      <p class="small-text">Keep your account credentials private. Our staff will never ask for your password.</p>
       <p class="small-text">This is an automated message, please do not reply to this email directly.</p>
     </div>
   </div>
