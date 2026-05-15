@@ -62,6 +62,14 @@ interface RoiPopupItem {
   status?: string
 }
 
+interface DummyInvestmentAlert {
+  id: string
+  userName: string
+  amount: number
+  plan: string
+  location: string
+}
+
 const formatCurrency = (amount: number = 0) =>
   amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -105,6 +113,24 @@ const DashboardMarquee = ({ btcPrice, loading }: { btcPrice: number; loading: bo
   </div>
   )
 }
+
+const DUMMY_INVESTMENT_ALERTS: Omit<DummyInvestmentAlert, 'id'>[] = [
+  { userName: 'Michael R.', amount: 2400, plan: '3-Day Plan', location: 'Canada' },
+  { userName: 'Sophia M.', amount: 6800, plan: '7-Day Plan', location: 'United Kingdom' },
+  { userName: 'Daniel K.', amount: 12500, plan: '12-Day Plan', location: 'Germany' },
+  { userName: 'Aisha B.', amount: 18000, plan: '15-Day Plan', location: 'UAE' },
+  { userName: 'Robert L.', amount: 47500, plan: '3-Month Plan', location: 'United States' },
+  { userName: 'Elena V.', amount: 62500, plan: '6-Month Plan', location: 'Spain' },
+  { userName: 'James T.', amount: 95000, plan: '3-Month Plan', location: 'Australia' },
+  { userName: 'Nora H.', amount: 135000, plan: '6-Month Plan', location: 'Switzerland' },
+  { userName: 'Samuel P.', amount: 8200, plan: '7-Day Plan', location: 'South Africa' },
+  { userName: 'Isabella C.', amount: 28500, plan: '15-Day Plan', location: 'Italy' },
+  { userName: 'Omar S.', amount: 72000, plan: '3-Month Plan', location: 'Qatar' },
+  { userName: 'Grace W.', amount: 155000, plan: '6-Month Plan', location: 'Singapore' },
+]
+
+const randomBetween = (min: number, max: number) =>
+  Math.floor(Math.random() * (max - min + 1)) + min
 
 function UserDashboard() {
   const { t } = useTranslation();
@@ -711,6 +737,37 @@ function UserDashboard() {
   const [kycData, setKycData] = useState<any>(null)
   const [profileState, setProfileState] = useState<string>('Dashboard')
   const [showSidePanel, setShowSidePanel] = useState(false)
+  const [dummyInvestmentAlert, setDummyInvestmentAlert] = useState<DummyInvestmentAlert | null>(null)
+
+  useEffect(() => {
+    let showTimer: ReturnType<typeof setTimeout> | null = null
+    let hideTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const showNextAlert = () => {
+      if (cancelled) return
+
+      const alert = DUMMY_INVESTMENT_ALERTS[randomBetween(0, DUMMY_INVESTMENT_ALERTS.length - 1)]
+      setDummyInvestmentAlert({
+        ...alert,
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      })
+
+      hideTimer = setTimeout(() => {
+        setDummyInvestmentAlert(null)
+      }, 7200)
+
+      showTimer = setTimeout(showNextAlert, randomBetween(22000, 38000))
+    }
+
+    showTimer = setTimeout(showNextAlert, randomBetween(4500, 9000))
+
+    return () => {
+      cancelled = true
+      if (showTimer) clearTimeout(showTimer)
+      if (hideTimer) clearTimeout(hideTimer)
+    }
+  }, [])
 
   useEffect(() => {
     if (!currentUser?.idnum || investments.length === 0) return;
@@ -1088,7 +1145,7 @@ function UserDashboard() {
     }
   }
 
-  const handleStartInvestment = (plan: any) => {
+  const handleStartInvestment = (plan: any, initialPaymentMethod = 'Balance') => {
     setSelectedPlan(plan)
     investmentSessionIdRef.current = `INVSESSION-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     investmentSubmitInFlightRef.current = false
@@ -1096,11 +1153,11 @@ function UserDashboard() {
     setInvestmentRetryAt(0)
     setInvestmentForm({
       capital: plan.minCapital.toString(),
-      paymentMethod: 'USDT-ERC20',
+      paymentMethod: initialPaymentMethod,
       transactionHash: '',
       bankSlip: null
     })
-    setInvestmentStep('confirm')
+    setInvestmentStep('select')
     setShowInvestmentModal(true)
   }
 
@@ -1171,7 +1228,22 @@ function UserDashboard() {
   }
 
   const handleInvestmentNext = async () => {
-    if (investmentStep === 'confirm') {
+    if (investmentStep === 'select') {
+      const capital = parseFloat(investmentForm.capital)
+      if (!capital || capital < selectedPlan.minCapital) {
+        showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountMin', { min: selectedPlan.minCapital.toLocaleString() }))
+        return
+      }
+      if (selectedPlan.maxCapital && capital > selectedPlan.maxCapital) {
+        showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountMax', { max: selectedPlan.maxCapital.toLocaleString() }))
+        return
+      }
+      if (investmentForm.paymentMethod === 'Balance' && capital > totalBalance) {
+        showAlert('error', 'Insufficient Balance', `Available account balance is $${formatCurrency(totalBalance)}.`)
+        return
+      }
+      setInvestmentStep('confirm')
+    } else if (investmentStep === 'confirm') {
       const capital = parseFloat(investmentForm.capital)
       if (!capital || capital < selectedPlan.minCapital) {
         showAlert('error', t('alerts.titleInvalidAmount'), t('alerts.invalidAmountMin', { min: selectedPlan.minCapital.toLocaleString() }))
@@ -1318,7 +1390,7 @@ function UserDashboard() {
     } else if (investmentStep === 'choose-method') {
       setInvestmentStep('confirm')
     } else if (investmentStep === 'confirm') {
-      setShowInvestmentModal(false)
+      setInvestmentStep('select')
     }
   }
 
@@ -2135,6 +2207,8 @@ function UserDashboard() {
     return sum + profit + capitalReturned
   }, 0)
   const totalBalance = (currentUser?.balance || 0) + (currentUser?.bonus || 0)
+  const configuredInvestmentAmount = parseFloat(investmentForm.capital) || 0
+  const balanceAfterConfiguredInvestment = totalBalance - configuredInvestmentAmount
   const downlineCount = Math.max(currentUser?.referralCount || 0, downlineReferrals.length)
   const downlineEarnings = Math.max(
     currentUser?.referralBonusTotal || 0,
@@ -2244,6 +2318,31 @@ function UserDashboard() {
 
   return (
     <div className="modern-dashboard">
+      {dummyInvestmentAlert && (
+        <div className="dummy-investment-alert" role="status" aria-live="polite">
+          <div className="dummy-investment-alert__icon">
+            <i className="icofont-chart-growth"></i>
+          </div>
+          <div className="dummy-investment-alert__body">
+            <div className="dummy-investment-alert__eyebrow">Live investment</div>
+            <div className="dummy-investment-alert__title">
+              {dummyInvestmentAlert.userName} just invested ${formatCurrency(dummyInvestmentAlert.amount)}
+            </div>
+            <div className="dummy-investment-alert__meta">
+              {dummyInvestmentAlert.plan} <span>{dummyInvestmentAlert.location}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="dummy-investment-alert__close"
+            aria-label="Dismiss investment alert"
+            onClick={() => setDummyInvestmentAlert(null)}
+          >
+            <i className="icofont-close"></i>
+          </button>
+        </div>
+      )}
+
       {roiPopup.show && (
         <div
           onClick={closeRoiPopup}
@@ -2417,13 +2516,6 @@ function UserDashboard() {
             <span>Dashboard</span>
           </button>
           <button
-            className={`nav-item ${profileState === 'Deposit' ? 'active' : ''}`}
-            onClick={() => { setProfileState('Deposit'); setShowSidePanel(false); }}
-          >
-            <i className="icofont-plus-circle"></i>
-            <span>Deposit Funds</span>
-          </button>
-          <button
             className={`nav-item ${profileState === 'Wallet' ? 'active' : ''}`}
             onClick={() => { setProfileState('Wallet'); setShowSidePanel(false); }}
           >
@@ -2431,26 +2523,11 @@ function UserDashboard() {
             <span>Wallet</span>
           </button>
           <button
-            className={`nav-item ${profileState === 'Bonus' ? 'active' : ''}`}
-            onClick={() => { setProfileState('Bonus'); setShowSidePanel(false); }}
+            className={`nav-item ${profileState === 'Deposit' ? 'active' : ''}`}
+            onClick={() => { setProfileState('Deposit'); setShowSidePanel(false); }}
           >
-            <i className="icofont-gift"></i>
-            <span>Bonus</span>
-          </button>
-          <button
-            className={`nav-item ${profileState === 'Stocks' ? 'active' : ''}`}
-            onClick={() => { setProfileState('Stocks'); setShowSidePanel(false); }}
-            title="Stock Trading — Coming Soon"
-          >
-            <i className="icofont-chart-line"></i>
-            <span>Stock Trading (Coming Soon)</span>
-          </button>
-          <button
-            className={`nav-item ${profileState === 'Profile' ? 'active' : ''}`}
-            onClick={openProfileKycSection}
-          >
-            <i className="icofont-user-suited"></i>
-            <span>Profile & KYC</span>
+            <i className="icofont-plus-circle"></i>
+            <span>Deposit Funds</span>
           </button>
           <button
             className={`nav-item ${profileState === 'Investments' ? 'active' : ''}`}
@@ -2470,11 +2547,11 @@ function UserDashboard() {
             <span>Withdrawals</span>
           </button>
           <button
-            className={`nav-item ${profileState === 'Loans' ? 'active' : ''}`}
-            onClick={() => { setProfileState('Loans'); setShowSidePanel(false); }}
+            className={`nav-item ${profileState === 'Bonus' ? 'active' : ''}`}
+            onClick={() => { setProfileState('Bonus'); setShowSidePanel(false); }}
           >
-            <i className="icofont-money-bag"></i>
-            <span>Loans</span>
+            <i className="icofont-gift"></i>
+            <span>Bonus</span>
           </button>
           <button
             className={`nav-item ${profileState === 'Downline' ? 'active' : ''}`}
@@ -2484,14 +2561,35 @@ function UserDashboard() {
             <span>Downline</span>
           </button>
           <button
+            className={`nav-item ${profileState === 'Loans' ? 'active' : ''}`}
+            onClick={() => { setProfileState('Loans'); setShowSidePanel(false); }}
+          >
+            <i className="icofont-money-bag"></i>
+            <span>Loans</span>
+          </button>
+          <button
+            className={`nav-item ${profileState === 'Stocks' ? 'active' : ''}`}
+            onClick={() => { setProfileState('Stocks'); setShowSidePanel(false); }}
+            title="Stock Trading - Coming Soon"
+          >
+            <i className="icofont-chart-line"></i>
+            <span>Stock Trading (Coming Soon)</span>
+          </button>
+          <button
+            className={`nav-item ${profileState === 'Profile' ? 'active' : ''}`}
+            onClick={openProfileKycSection}
+          >
+            <i className="icofont-user-suited"></i>
+            <span>Profile & KYC</span>
+          </button>
+          <button
             className={`nav-item ${profileState === 'Support' ? 'active' : ''}`}
             onClick={() => { setProfileState('Support'); setShowSidePanel(false); }}
           >
             <i className="icofont-live-support"></i>
             <span>Support</span>
           </button>
-          
-          {/* Admin Panel Link - Only visible to admin users */}
+                    {/* Admin Panel Link - Only visible to admin users */}
           {(currentUser?.role === 'admin' || currentUser?.role === 'superadmin') && (
             <button
               className="nav-item"
@@ -5288,7 +5386,13 @@ function UserDashboard() {
 
                 <div className="modal-body">
                   <div className="investment-summary-card">
-                    <h3>{selectedPlan.name}</h3>
+                    <div className="investment-summary-heading">
+                      <div>
+                        <h3>{selectedPlan.name}</h3>
+                        <p>Set the amount and choose how to fund it.</p>
+                      </div>
+                      <span>{investmentForm.paymentMethod === 'Balance' ? 'Balance' : selectedPaymentName}</span>
+                    </div>
                     <div className="summary-grid">
                       <div>
                         <span className="label">Daily ROI</span>
@@ -5314,7 +5418,7 @@ function UserDashboard() {
                       min={selectedPlan.minCapital}
                       max={selectedPlan.maxCapital || undefined}
                       placeholder={`Min: $${selectedPlan.minCapital.toLocaleString()}`}
-                      className="modal-input"
+                      className="modal-input investment-amount-input"
                     />
                     <small className="input-hint">
                       Range: ${selectedPlan.minCapital.toLocaleString()}
@@ -5322,17 +5426,44 @@ function UserDashboard() {
                     </small>
                   </div>
 
+                  {investmentForm.paymentMethod === 'Balance' && (
+                    <div className="balance-funding-panel">
+                      <div>
+                        <span>Available Account Balance</span>
+                        <strong>${formatCurrency(totalBalance)}</strong>
+                      </div>
+                      <div>
+                        <span>Investment Amount</span>
+                        <strong>${formatCurrency(configuredInvestmentAmount)}</strong>
+                      </div>
+                      <div className={balanceAfterConfiguredInvestment < 0 ? 'negative' : 'positive'}>
+                        <span>Balance After Investment</span>
+                        <strong>${formatCurrency(Math.max(balanceAfterConfiguredInvestment, 0))}</strong>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="form-group">
                     <label>Payment Method</label>
                     <div className="payment-methods-grid">
                       {Object.entries(paymentMethods).map(([key, method]) => (
                         <button
                           key={key}
-                          className={`payment-method-card ${investmentForm.paymentMethod === key ? 'active' : ''}`}
-                          onClick={() => setInvestmentForm({ ...investmentForm, paymentMethod: key })}
+                          className={`payment-method-card ${key === 'Crypto' ? isCryptoPayment ? 'active' : '' : investmentForm.paymentMethod === key ? 'active' : ''}`}
+                          onClick={() => {
+                            setInvestmentForm({
+                              ...investmentForm,
+                              paymentMethod: key === 'Crypto' ? 'Bitcoin' : key,
+                              transactionHash: '',
+                              bankSlip: null,
+                            })
+                          }}
                         >
                           <span className="method-icon">{method.icon}</span>
-                          <span className="method-name">{method.name}</span>
+                          <span className="method-copy">
+                            <span className="method-name">{method.name}</span>
+                            {'description' in method && <span className="method-description">{method.description}</span>}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -5507,10 +5638,26 @@ function UserDashboard() {
                     ))}
                   </div>
                   {investmentForm.paymentMethod === 'Balance' && (
-                    <div className="warning-box" style={{ marginTop: '1rem' }}>
-                      <i className="icofont-wallet"></i>
+                    <div className="balance-funding-panel balance-funding-panel--modal">
+                      <div className="balance-funding-field">
+                        <label>Investment Amount</label>
+                        <input
+                          type="number"
+                          min={selectedPlan.minCapital}
+                          max={selectedPlan.maxCapital || undefined}
+                          step="0.01"
+                          className="modal-input investment-amount-input"
+                          value={investmentForm.capital}
+                          onChange={(event) => setInvestmentForm({ ...investmentForm, capital: event.target.value })}
+                        />
+                      </div>
                       <div>
-                        Available balance: ${formatCurrency(totalBalance)}. The investment amount will be deducted immediately and held while the investment is pending approval.
+                        <span>Available Account Balance</span>
+                        <strong>${formatCurrency(totalBalance)}</strong>
+                      </div>
+                      <div className={balanceAfterConfiguredInvestment < 0 ? 'negative' : 'positive'}>
+                        <span>Balance After Investment</span>
+                        <strong>${formatCurrency(Math.max(balanceAfterConfiguredInvestment, 0))}</strong>
                       </div>
                     </div>
                   )}

@@ -777,7 +777,7 @@ app.post('/api/credit-daily-roi', async (req, res) => {
       .from('investments')
       .select('*')
       .eq('status', 'Active')
-      .or('authStatus.is.null,authStatus.eq.approved');
+      .eq('authStatus', 'approved');
 
     if (invError) {
       console.error('Error fetching active investments:', invError);
@@ -802,15 +802,23 @@ app.post('/api/credit-daily-roi', async (req, res) => {
         // Calculate daily ROI amount
         const dailyRoiAmount = investment.capital * planConfig.dailyRate;
 
-        // Check if investment is still within duration
-        // Use startDate (approval date) if available, otherwise fall back to creation date
-        const startDate = investment.startDate ? new Date(investment.startDate) : new Date(investment.date);
+        // Check if investment is still within duration.
+        // ROI and final bonus eligibility must begin at admin approval, not request creation.
+        const startDate = investment.startDate ? new Date(investment.startDate) : null;
         const now = new Date();
+        if (!startDate || Number.isNaN(startDate.getTime())) {
+          console.warn(`Skipping investment ${investment.id}: missing approval start date`);
+          continue;
+        }
         const daysElapsed = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
+        if (daysElapsed < 1) {
+          console.log(`No ROI or bonus due yet for investment ${investment.id}: less than 24 hours since approval`);
+          continue;
+        }
 
         // Check if we already credited ROI today (compare dates)
         // Use startDate as baseline for crediting, not creation date
-        const investmentStartDate = investment.startDate ? new Date(investment.startDate) : new Date(investment.date);
+        const investmentStartDate = startDate;
         const lastCreditDate = investment.updated_at ? new Date(investment.updated_at) : investmentStartDate;
         const today = new Date();
         today.setHours(0, 0, 0, 0);

@@ -30,7 +30,7 @@ const dollars = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const getCreditedRoi = (investment) => Number(investment.creditedRoi ?? investment.credited_roi ?? 0) || 0;
 const getCreditedBonus = (investment) => Number(investment.creditedBonus ?? investment.credited_bonus ?? 0) || 0;
 const getInvestmentStartDate = (investment) => {
-  const rawDate = investment.startDate || investment.start_date || investment.date || investment.created_at;
+  const rawDate = investment.startDate || investment.start_date;
   const parsedDate = rawDate ? new Date(rawDate) : null;
   return parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
 };
@@ -42,7 +42,7 @@ async function creditDailyROI() {
     .from('investments')
     .select('*')
     .eq('status', 'Active')
-    .or('authStatus.is.null,authStatus.eq.approved');
+    .eq('authStatus', 'approved');
 
   if (invError) {
     throw new Error(`Failed to fetch active investments: ${invError.message}`);
@@ -75,12 +75,17 @@ async function creditDailyROI() {
       const startDate = getInvestmentStartDate(investment);
 
       if (!capital || !startDate) {
-        console.warn(`Skipping investment ${investment.id}: missing capital or start date.`);
+        console.warn(`Skipping investment ${investment.id}: missing capital or approval start date.`);
         skipped++;
         continue;
       }
 
       const daysElapsed = Math.floor((now.getTime() - startDate.getTime()) / dayMs);
+      if (daysElapsed < 1) {
+        console.log(`Skipping investment ${investment.id}: less than 24 hours since approval.`);
+        skipped++;
+        continue;
+      }
       const payableDays = Math.min(Math.max(daysElapsed, 0), planConfig.durationDays);
       const totalExpectedRoi = dollars(dailyRoiAmount * planConfig.durationDays);
       const expectedRoiToDate = dollars(dailyRoiAmount * payableDays);

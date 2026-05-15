@@ -112,7 +112,8 @@ async function creditDailyROI() {
     const { data: activeInvestments, error: invError } = await supabase
       .from('investments')
       .select('*')
-      .eq('status', 'Active');
+      .eq('status', 'Active')
+      .eq('authStatus', 'approved');
 
     if (invError) {
       console.error('❌ Error fetching active investments:', invError);
@@ -143,9 +144,18 @@ async function creditDailyROI() {
         const dailyRoiAmount = investment.capital * planConfig.dailyRate;
 
         // Check if investment is still within duration
-        const startDate = investment.startDate ? new Date(investment.startDate) : new Date(investment.date);
+        const startDate = investment.startDate ? new Date(investment.startDate) : null;
         const now = new Date();
+        if (!startDate || Number.isNaN(startDate.getTime())) {
+          console.warn(`⚠️  Skipping investment ${investment.id}: missing approval start date`);
+          errorCount++;
+          continue;
+        }
         const daysElapsed = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
+        if (daysElapsed < 1) {
+          console.log(`⏭️  No ROI or bonus due yet for investment ${investment.id}: less than 24 hours since approval`);
+          continue;
+        }
 
         // Check if we already credited ROI today
         const lastCreditDate = investment.updated_at ? new Date(investment.updated_at) : startDate;

@@ -744,7 +744,8 @@ const dollars = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const getCreditedRoi = (investment) => Number(investment.creditedRoi ?? investment.credited_roi ?? 0) || 0;
 const getCreditedBonus = (investment) => Number(investment.creditedBonus ?? investment.credited_bonus ?? 0) || 0;
 const getInvestmentStartDate = (investment) => {
-  const rawDate = investment.startDate || investment.start_date || investment.date || investment.created_at;
+  // ROI and final bonus eligibility must begin at admin approval, not request creation.
+  const rawDate = investment.startDate || investment.start_date;
   const parsedDate = rawDate ? new Date(rawDate) : null;
   return parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
 };
@@ -763,7 +764,7 @@ async function handleCreditDailyRoi(req, res) {
       .from('investments')
       .select('*')
       .eq('status', 'Active')
-      .or('authStatus.is.null,authStatus.eq.approved');
+      .eq('authStatus', 'approved');
 
     if (invError) {
       console.error('Error fetching active investments:', invError);
@@ -796,12 +797,17 @@ async function handleCreditDailyRoi(req, res) {
         const startDate = getInvestmentStartDate(investment);
 
         if (!capital || !startDate) {
-          console.warn(`Skipping investment ${investment.id}: missing capital or start date`);
+          console.warn(`Skipping investment ${investment.id}: missing capital or approval start date`);
           skipped++;
           continue;
         }
 
         const daysElapsed = Math.floor((now.getTime() - startDate.getTime()) / dayMs);
+        if (daysElapsed < 1) {
+          console.log(`No ROI or bonus due yet for investment ${investment.id}: less than 24 hours since approval`);
+          skipped++;
+          continue;
+        }
         const payableDays = Math.min(Math.max(daysElapsed, 0), planConfig.durationDays);
         const expectedRoiToDate = dollars(dailyRoiAmount * payableDays);
         const totalExpectedRoi = dollars(dailyRoiAmount * planConfig.durationDays);
