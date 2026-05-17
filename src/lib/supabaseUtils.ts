@@ -622,6 +622,7 @@ export const supabaseDb = {
             referredId: user.idnum,
             referralCode: user.referredByCode || referralCode || referrerId,
             bonusEarned: 0,
+            bonusAwarded: false, // Bonus not yet awarded until deposit/investment is made
             level: 1,
             created_at: user.created_at || user.date,
             referredUser: mapUserRecord(user),
