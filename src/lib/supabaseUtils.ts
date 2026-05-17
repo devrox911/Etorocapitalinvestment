@@ -720,8 +720,8 @@ export const supabaseDb = {
         return false
       }
 
-      // Calculate 10% bonus
-      const bonusAmount = parseFloat((depositOrInvestmentAmount * 0.1).toFixed(2))
+      // Calculate 5% bonus
+      const bonusAmount = parseFloat((depositOrInvestmentAmount * 0.05).toFixed(2))
       
       if (bonusAmount <= 0) {
         console.warn('Bonus amount is zero or negative, skipping award')
@@ -771,7 +771,7 @@ export const supabaseDb = {
         return false
       }
 
-      console.log(`✅ Referral bonus awarded: $${bonusAmount} (10% of $${depositOrInvestmentAmount}) to referrer ${referralData.referrerId}`)
+      console.log(`✅ Referral bonus awarded: $${bonusAmount} (5% of $${depositOrInvestmentAmount}) to referrer ${referralData.referrerId}`)
       
       // Send notification to referrer
       try {

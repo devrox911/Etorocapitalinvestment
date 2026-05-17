@@ -543,7 +543,7 @@ function AdminDashboard() {
         const newBalance = (currentUser.balance || 0) + (investment.capital || 0)
         await supabaseDb.updateUser(currentUser.idnum, { balance: newBalance })
 
-        // Award referral bonus if applicable (10% of investment capital)
+        // Award referral bonus if applicable (5% of investment capital)
         if (investment.idnum) {
           const referralBonusAwarded = await supabaseDb.awardReferralBonus(investment.idnum, investment.capital || 0);
           if (referralBonusAwarded) {
@@ -775,7 +775,7 @@ function AdminDashboard() {
          console.log(`✅ User balance updated: $${newBalance}`);
       }
 
-      // 3.5. Award referral bonus if applicable (10% of deposit)
+      // 3.5. Award referral bonus if applicable (5% of deposit)
       console.log('Step 3.5: Check and award referral bonus');
       if (user.idnum) {
         const referralBonusAwarded = await supabaseDb.awardReferralBonus(user.idnum, amount);

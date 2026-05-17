@@ -396,7 +396,7 @@ export default {
     
     <div class="section" style="background-color: rgba(34, 197, 94, 0.1); border-left: 3px solid #22c55e; padding: 15px;">
       <p><strong>New User:</strong> ${newUserName} (${newUserEmail})</p>
-      <p><strong>Status:</strong> Pending - 10% referral bonus will be awarded once they make their first deposit or investment.</p>
+      <p><strong>Status:</strong> Pending - 5% referral bonus will be awarded once they make their first investment.</p>
       <p style="margin: 0; color: #666; font-size: 0.9em;">You now have <strong>${totalReferrals}</strong> total referrals.</p>
     </div>
     
@@ -415,7 +415,7 @@ export default {
           <td><span class="highlight">$${parseFloat(sourceAmount).toFixed(2)}</span></td>
         </tr>
         <tr>
-          <td><strong>Your Referral Bonus (10%)</strong></td>
+          <td><strong>Your Referral Bonus (5%)</strong></td>
           <td><span class="highlight" style="color: #10b981; font-size: 1.2em;">+$${parseFloat(bonusAmount).toFixed(2)}</span></td>
         </tr>
         <tr>
