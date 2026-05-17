@@ -162,7 +162,7 @@ export default {
   roiCredited: (name, planName, amount, newBalance, date) => wrapTemplate('Daily Profit Credited', `
     <div class="section">
       <p>Hello <strong>${name}</strong>,</p>
-      <p>🎉 Great news! Your daily investment returns have been credited to your account.</p>
+      <p>Great news! Your daily investment returns have been credited to your account.</p>
     </div>
     
     <div class="section">
@@ -193,7 +193,7 @@ export default {
     </div>
 
     <div class="section" style="background: #f0f9ff; padding: 16px; border-radius: 8px; border-left: 4px solid #f0b90b;">
-      <p style="margin: 0; color: #334155; font-size: 13px;"><strong>💡 Tip:</strong> Your profits are added to your balance and can be withdrawn anytime or reinvested in new plans.</p>
+      <p style="margin: 0; color: #334155; font-size: 13px;"><strong>Tip:</strong> Your profits are added to your balance and can be withdrawn anytime or reinvested in new plans.</p>
     </div>
   `),
 
@@ -404,7 +404,7 @@ export default {
     <center><a href="${SITE_URL}/dashboard" class="button">View Your Referrals</a></center>
   `),
 
-  referralBonusAwarded: (referrerName, bonusAmount, sourceAmount, sourceType, newTotalBonus) => wrapTemplate('Referral Bonus Earned! 🎉', `
+  referralBonusAwarded: (referrerName, bonusAmount, sourceAmount, sourceType, newTotalBonus) => wrapTemplate('Referral Bonus Earned', `
     <h2>Congratulations, ${referrerName}!</h2>
     <p>Your referred user just made their first ${sourceType === 'deposit_or_investment' ? 'deposit or investment' : 'transaction'}!</p>
     

@@ -153,25 +153,12 @@ function UserDashboard() {
     return currentOrigin || appUrl || serverUrl;
   };
 
-  // Track previous balance to detect profit credits
-  const [previousBalance, setPreviousBalance] = useState<number | null>(null);
+  // Note: Removed automatic profit detection on balance changes
+  // Profit notifications should only be sent from backend when ROI is actually credited
 
   const syncSessionUser = (dbUser: any) => {
-    // Detect profit credit (balance increased)
-    if (previousBalance !== null && dbUser.balance !== undefined) {
-      const balanceIncrease = dbUser.balance - previousBalance;
-      if (balanceIncrease > 0.01) {
-        // Balance increased - likely from profit credit
-        addNotification(
-          '💰 Profit Credited',
-          `Your profit of $${balanceIncrease.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been credited to your account!`,
-          'success'
-        );
-      }
-    }
-    
-    // Update previous balance for next comparison
-    setPreviousBalance(dbUser.balance || 0);
+    // Sync user data without checking for profit credits
+    // The backend will send explicit profit credit notifications when ROI is credited via cron jobs
     
     updateUser({
       id: dbUser.id,
@@ -567,7 +554,7 @@ function UserDashboard() {
                     if (updatedLoan) {
                       if (updatedLoan.status === 'approved') {
                         addNotification(
-                          'Loan Approved! 🎉',
+                          'Loan Approved',
                           `Your loan request of $${updatedLoan.amount?.toLocaleString()} has been approved.`,
                           'success'
                         );
@@ -607,7 +594,7 @@ function UserDashboard() {
                   if (updatedInvestment) {
                     if (updatedInvestment.status === 'Active') {
                       addNotification(
-                        'Investment Approved! 🎉',
+                        'Investment Approved',
                         `Your investment of $${updatedInvestment.capital?.toLocaleString()} in ${updatedInvestment.plan} has been approved and is now active.`,
                         'success'
                       );
@@ -2234,7 +2221,8 @@ function UserDashboard() {
   );
   const totalCapital = approvedInvestments.reduce((sum, inv) => sum + (inv.capital || 0), 0)
   const totalROI = approvedInvestments.reduce((sum, inv) => sum + (inv.roi || 0), 0)
-  const totalBonus = approvedInvestments.reduce((sum, inv) => sum + (inv.bonus || 0), 0)
+  // Total Earned = Only CREDITED ROI + CREDITED BONUS (actual earnings, not expected)
+  const totalEarned = approvedInvestments.reduce((sum, inv) => sum + (inv.creditedRoi || 0) + (inv.creditedBonus || 0), 0)
   // Calculate total returns (Realized ROI + Realized Bonus + Returned Capital for completed plans)
   const totalReturns = approvedInvestments.reduce((sum, inv) => {
     const profit = (inv.creditedRoi || 0) + (inv.creditedBonus || 0)
@@ -2744,7 +2732,7 @@ function UserDashboard() {
                   <div className="stat-details">
                     <p className="stat-label">Total Returns</p>
                     <h2 className="stat-value">${totalReturns.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
-                    <p className="stat-change positive">+${totalBonus.toLocaleString()} bonus</p>
+                    <p className="stat-change positive">+${totalEarned.toLocaleString()} earned</p>
                   </div>
                 </div>
 
@@ -3329,7 +3317,7 @@ function UserDashboard() {
                   </div>
                   <div className="stat-details">
                     <p className="stat-label">Total Earned</p>
-                    <h2 className="stat-value">${totalBonus.toLocaleString()}</h2>
+                    <h2 className="stat-value">${totalEarned.toLocaleString()}</h2>
                     <p className="stat-info">From all investments</p>
                   </div>
                 </div>
@@ -8276,7 +8264,7 @@ function UserDashboard() {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <span style={{ fontSize: '24px', flexShrink: 0, marginTop: '2px' }}>💰</span>
+                <span style={{ fontSize: '24px', flexShrink: 0, marginTop: '2px' }}>�</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '4px', lineHeight: 1.2 }}>
                     {recentSuccess.title || 'Profit Credited'}
